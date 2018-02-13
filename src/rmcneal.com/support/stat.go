@@ -304,10 +304,12 @@ func (s *StatsState) StatsDump() {
 				highCol, s.WriteLatHigh)
 		}
 		s.printer.Send("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
-		s.printer.Send("IOPS: %s, Time: %s, Bandwidth: %s\n",
+		s.printer.Send("IOPS: %s, Time: %s, Bandwidth: %s (r:%s,w:%s)\n",
 			Humanize(s.Iops/int64(runTime.Seconds()), 1),
 			runTime,
-			Humanize((s.ReadBW+s.WriteBW)/int64(runTime.Seconds()), 1))
+			Humanize((s.ReadBW+s.WriteBW)/int64(runTime.Seconds()), 1),
+			Humanize(s.ReadBW / int64(runTime.Seconds()), 1),
+			Humanize(s.WriteBW / int64(runTime.Seconds()), 1))
 	} else {
 		forceRaw = true
 	}
