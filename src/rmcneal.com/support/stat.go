@@ -266,8 +266,16 @@ func (s *StatsState) StatsDump() {
 
 	s.latency.Graph()
 
-	s.ReadLatAvg = s.ReadLatAvg / time.Duration(s.ReadIOPS)
-	s.WriteLatAvg = s.WriteLatAvg / time.Duration(s.WriteIOPS)
+	if s.ReadIOPS != 0 {
+		s.ReadLatAvg = s.ReadLatAvg / time.Duration(s.ReadIOPS)
+	} else {
+		s.ReadLatAvg = 0
+	}
+	if s.WriteIOPS != 0 {
+		s.WriteLatAvg = s.WriteLatAvg / time.Duration(s.WriteIOPS)
+	} else {
+		s.WriteLatAvg = 0
+	}
 	typeCol := len("Read")
 	if typeCol < len("Write") {
 		typeCol = len("Write")

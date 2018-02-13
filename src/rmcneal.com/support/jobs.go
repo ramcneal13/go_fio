@@ -107,6 +107,7 @@ func (j *Job) Init(tracker *tracking) error {
 	for e := j.JobParams.accessPattern.Front(); e != nil; e = e.Next() {
 		access := e.Value.(AccessPattern)
 		access.sectionStart = currentBlk
+		access.lastBlk = currentBlk
 		currentBlk += j.JobParams.fileSize * int64(access.sectionPercent) / 100
 		access.sectionEnd = currentBlk - access.blkSize
 		access.buf = make([]byte, access.blkSize)
@@ -252,8 +253,10 @@ func (j *Job) oneAD() AccessData {
 				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - int64(len(ad.buf))) / 512)
 				ad.blk = randBlk*512 + access.sectionStart
 				access.lastBlk = ad.blk
+			case NoneType:
+				ad.blk = 0
 			default:
-				fmt.Printf("Invalid opType=%d ... should be impossible", access.opType)
+				fmt.Printf("\nInvalid opType=%d ... should be impossible\n", access.opType)
 				os.Exit(1)
 			}
 			// We get a copy of the element stored in the list. So, update the element
@@ -272,6 +275,8 @@ func (j *Job) oneAD() AccessData {
 				} else {
 					ad.op = WriteBaseType
 				}
+			case NoneType:
+				ad.op = NoneType
 			}
 			break
 		} else {
@@ -382,6 +387,8 @@ func (j *Job) ioWorker(workId int) {
 					continue
 				}
 			}
+		case NoneType:
+			continue
 		case StopType:
 			j.thrCompletes <- rpt
 			return
