@@ -30,6 +30,8 @@ func (w *WorkerConfig) parseOptions() bool {
 	w.sizeToUse = 0
 	w.blkSize = 64 * 1024
 	w.threads = 32
+	w.inputOffset = 0
+	w.outputOffset = 0
 
 	opts := strings.Split(w.Options, ",")
 	for _, kvStr := range opts {
@@ -59,6 +61,14 @@ func (w *WorkerConfig) parseOptions() bool {
 				return false
 			} else {
 				w.blkSize = int(c)
+			}
+		case "offset":
+			if c, err := blkStringToInt64(kvPair[1]); err == false {
+				fmt.Printf("Invalid offset: %s\n", kvPair[1])
+				return false
+			} else {
+				w.inputOffset = c
+				w.outputOffset = c
 			}
 		default:
 			fmt.Printf("Unknown key: %s\n", kvPair[0])
@@ -139,19 +149,23 @@ func (w *WorkerConfig) Start(stats *StatData) {
 }
 
 type AccessControl struct {
-	seekPos	int64
-	stopAccess	bool
+	inputSeekPos  int64
+	outputSeekPos int64
+	stopAccess    bool
 }
 
 func (w *WorkerConfig) blockControl() {
-	var curPos int64 = 0
+	var inputCurPos = w.inputOffset
+	var outputCurPos = w.outputOffset
 	var ac AccessControl
 
-	for curPos < w.sizeToUse {
-		ac.seekPos = curPos
+	for inputCurPos < w.sizeToUse {
+		ac.inputSeekPos = inputCurPos
+		ac.outputSeekPos = outputCurPos
 		ac.stopAccess = false
 		w.acChan <- ac
-		curPos += int64(w.blkSize)
+		inputCurPos += int64(w.blkSize)
+		outputCurPos += int64(w.blkSize)
 	}
 	for i := 0; i < w.threads; i++ {
 		ac.stopAccess = true
@@ -177,15 +191,15 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData, completeChan 
 		}
 
 		startTime = time.Now()
-		if cnt, err := w.srcFile.ReadAt(buf, ac.seekPos); err != nil {
-			fmt.Printf("Read(0x%x) failed, expected %d, got %d; err=%s\n", ac.seekPos, w.blkSize, cnt, err)
+		if cnt, err := w.srcFile.ReadAt(buf, ac.inputSeekPos); err != nil {
+			fmt.Printf("Read(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
 			return
 		}
 		endTime = time.Now()
 		readElapsed = endTime.Sub(startTime)
 		startTime = time.Now()
-		if cnt, err := w.tgtFile.WriteAt(buf, ac.seekPos); err != nil {
-			fmt.Printf("Write(0x%x) failed, expected %d, got %d; err=%s\n", ac.seekPos, w.blkSize, cnt, err)
+		if cnt, err := w.tgtFile.WriteAt(buf, ac.outputSeekPos); err != nil {
+			fmt.Printf("Write(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
 			return
 		}
 		endTime = time.Now()
