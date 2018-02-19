@@ -24,6 +24,7 @@ type StatRecord struct {
 	byteCount	int64
 }
 
+//noinspection ALL,GoSnakeCaseUsage
 const (
 	START_STATS = 1
 	STOP_STATS = 2
@@ -68,24 +69,30 @@ func (s *StatData) worker() {
 	var rec StatRecord
 	tick := time.Tick(time.Second)
 	tickSeconds := 0
+	stats_running := false
 
 	for {
 		select {
 		case <- tick:
-			elapsed := time.Now().Sub(s.startTime)
-			if elapsed.Seconds() == 0 {
+			if stats_running == false {
 				break
 			}
-			tickSeconds++
-			fmt.Printf("[%s] IOPS: %s, BW: %s\r", SecsToHMSstr(tickSeconds),
-				Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
-				Humanize(s.readBytes/int64(elapsed.Seconds()), 1))
+			elapsed := time.Since(s.startTime)
+			if elapsed.Seconds() != 0 {
+				tickSeconds++
+				fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
+					Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
+					Humanize(s.readBytes/int64(elapsed.Seconds()), 1),
+					Humanize(s.readBytes, 1))
+			}
 		case rec = <-s.statChan:
 			switch rec.op {
 			case START_STATS:
+				stats_running = true
 				s.startTime = time.Now()
 				s.ackChan <- 1
 			case STOP_STATS:
+				stats_running = false
 				fmt.Println()
 				s.endTime = time.Now()
 				s.ackChan <- 1

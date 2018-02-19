@@ -14,9 +14,11 @@ type WorkerConfig struct {
 	Options		string
 
 	// Values converted from Options string
-	sizeToUse	int64
-	threads		int
-	blkSize		int
+	sizeToUse    int64
+	threads      int
+	blkSize      int
+	inputOffset  int64
+	outputOffset int64
 
 	// State of worker
 	srcFile		*os.File
