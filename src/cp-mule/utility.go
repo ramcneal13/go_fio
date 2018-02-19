@@ -58,3 +58,9 @@ func humanizeImpl(val float64, idx int) string {
 	}
 }
 
+func SecsToHMSstr(seconds int) string {
+	h := seconds / 3600
+	m := seconds / 60 % 60
+	s := seconds % 60
+	return fmt.Sprintf("%02dh%02dm%02ds", h, m, s)
+}

@@ -66,36 +66,50 @@ func (s *StatData) Record(readTime time.Duration, writeTime time.Duration, count
 
 func (s *StatData) worker() {
 	var rec StatRecord
+	tick := time.Tick(time.Second)
+	tickSeconds := 0
 
 	for {
-		rec = <- s.statChan
-		switch rec.op {
-		case START_STATS:
-			s.startTime = time.Now()
-			s.ackChan <- 1
-		case STOP_STATS:
-			s.endTime = time.Now()
-			s.ackChan <- 1
-		case DISPLAY_STATS:
-			elapsed := s.endTime.Sub(s.startTime)
-			fmt.Printf("Total Time: %s\n", elapsed)
-			fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
-			fmt.Printf("IOPS: %s\n", Humanize(s.totalOps / int64(elapsed.Seconds()), 1))
-			fmt.Printf("Throughput: %s\n", Humanize(s.readBytes / int64(elapsed.Seconds()), 1))
-			fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime) / s.totalOps))
-			fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime) / s.totalOps))
-			s.ackChan <- 1
-		case CLEAR_STATS:
-			s.totalOps = 0
-			s.readBytes = 0
-			s.readTime = 0
-			s.writeTime = 0
-			s.ackChan <- 1
-		case RECORD_STATS:
-			s.readBytes += rec.byteCount
-			s.readTime += rec.readTime
-			s.writeTime += rec.writeTime
-			s.totalOps++
+		select {
+		case <- tick:
+			elapsed := time.Now().Sub(s.startTime)
+			if elapsed.Seconds() == 0 {
+				break
+			}
+			tickSeconds++
+			fmt.Printf("[%s] IOPS: %s, BW: %s\r", SecsToHMSstr(tickSeconds),
+				Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
+				Humanize(s.readBytes/int64(elapsed.Seconds()), 1))
+		case rec = <-s.statChan:
+			switch rec.op {
+			case START_STATS:
+				s.startTime = time.Now()
+				s.ackChan <- 1
+			case STOP_STATS:
+				fmt.Println()
+				s.endTime = time.Now()
+				s.ackChan <- 1
+			case DISPLAY_STATS:
+				elapsed := s.endTime.Sub(s.startTime)
+				fmt.Printf("Total Time: %s\n", elapsed)
+				fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
+				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(elapsed.Seconds()), 1))
+				fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(elapsed.Seconds()), 1))
+				fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
+				fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
+				s.ackChan <- 1
+			case CLEAR_STATS:
+				s.totalOps = 0
+				s.readBytes = 0
+				s.readTime = 0
+				s.writeTime = 0
+				s.ackChan <- 1
+			case RECORD_STATS:
+				s.readBytes += rec.byteCount
+				s.readTime += rec.readTime
+				s.writeTime += rec.writeTime
+				s.totalOps++
+			}
 		}
 	}
 }
