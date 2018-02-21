@@ -138,10 +138,11 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 		return
 	}
 
-	w.acChan = make(chan AccessControl, 1000)
+	w.acChan = make(chan AccessControl, 10000)
+	go w.blockControl()
+
 	w.thrComplete = make(chan int, 10)
 	w.stats = stats
-	go w.blockControl()
 	for i := 0; i < w.threads; i++ {
 		go w.readWriteWorker(i, stats)
 	}
@@ -178,10 +179,14 @@ func (w *WorkerConfig) blockControl() {
 	}
 
 	// Wait for them to finish
+	blockedIO := 0
 	for i := 0; i < w.threads; i++ {
-		<-w.thrComplete
+		blockedIO += <-w.thrComplete
 	}
 	w.stats.Stop()
+	if blockedIO != 0 {
+		fmt.Printf("\n%d calls to blocked acChan\n", blockedIO)
+	}
 
 	if w.srcFile != nil {
 		w.srcFile.Close()
@@ -196,18 +201,47 @@ func (w *WorkerConfig) blockControl() {
 func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 	var ac AccessControl
 	var readElapsed time.Duration
-	var writeElapsed time.Duration
 	var startTime time.Time
 	var endTime time.Time
 	buf := make([]byte, w.blkSize)
+	blockedIO := 0
 
 	defer func() {
-		w.thrComplete <- thrId
+		w.thrComplete <- blockedIO
 	}()
+
+	//
+	// These booleans, countAfterFirst, doSelect, and count countOnce, are all part of an
+	// experiment to see if the code would block while trying to get the next block to perform
+	// an I/O with. Originally acChan was created with a buffer of 1,000 and the blockIO value
+	// was in the millions. Clearly the code was spinning quite a bit while waiting for something.
+	// countOnce was added to reduce the counts that were from just spinning. That lowered the
+	// value return substantially, but it was still non-zero. It also became obvious that the thread
+	// which sends data to the channel probably isn't schedule to run first or gets the change to run
+	// first a prime the channel. So, countAfterFirst was added to further reduce the noise. At that
+	// point the code reported that around 50 times one or more of the threads would attempt to read
+	// from the channel and be blocked. So, the channel buffer was increased from 1,000 to 10,000 and
+	// the problem no longer happens. Leaving this code here as a reminder of why and how this was
+	// determined.
+	//
+	countAfterFirst := false
 	for {
-		ac = <-w.acChan
-		if ac.stopAccess {
-			return
+		doSelect := true
+		countOnce := true
+		for doSelect {
+			select {
+			case ac = <-w.acChan:
+				if ac.stopAccess {
+					return
+				}
+				countAfterFirst = true
+				doSelect = false
+			default:
+				if countAfterFirst && countOnce {
+					countOnce = false
+					blockedIO++
+				}
+			}
 		}
 
 		startTime = time.Now()
@@ -223,7 +257,6 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 			return
 		}
 		endTime = time.Now()
-		writeElapsed = endTime.Sub(startTime)
-		stats.Record(readElapsed, writeElapsed, int64(len(buf)))
+		stats.Record(readElapsed, endTime.Sub(startTime), int64(len(buf)))
 	}
 }

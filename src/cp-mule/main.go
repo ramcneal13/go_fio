@@ -27,7 +27,7 @@ func init() {
 func main() {
 	var listOfWorkers []*WorkerConfig = nil
 
-	intrChans := make(chan os.Signal, 1)
+	intrChan := make(chan os.Signal, 1)
 	flag.Parse()
 	if configFile != "" {
 		fmt.Println("Need to add code to parse configuration file")
@@ -40,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	signal.Notify(intrChans, os.Interrupt, os.Kill)
+	signal.Notify(intrChan, os.Interrupt, os.Kill)
 	exitChan := make(chan int, 1)
 	tick := time.Tick(time.Second)
 
@@ -70,7 +70,7 @@ func main() {
 				stats.Clear()
 				doRun = false
 			}
-		case <-intrChans:
+		case <-intrChan:
 			stats.Stop()
 			fmt.Printf("\nImpatient")
 			for _, w := range listOfWorkers {
