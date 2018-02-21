@@ -11,10 +11,11 @@ type StatData struct {
 	readTime	time.Duration
 	writeTime	time.Duration
 
-	startTime	time.Time
-	endTime		time.Time
-	statChan	chan StatRecord
-	ackChan		chan int
+	startTime time.Time
+	endTime   time.Time
+	elapsed   time.Duration
+	statChan  chan StatRecord
+	ackChan   chan int
 }
 
 type StatRecord struct {
@@ -26,15 +27,18 @@ type StatRecord struct {
 
 //noinspection ALL,GoSnakeCaseUsage
 const (
-	START_STATS = 1
-	STOP_STATS = 2
-	RECORD_STATS = 3
+	START_STATS   = 1
+	STOP_STATS    = 2
+	RECORD_STATS  = 3
 	DISPLAY_STATS = 4
-	CLEAR_STATS = 5
+	CLEAR_STATS   = 5
+	SHOW_CURRENT  = 6
 )
 
 func StartStats() *StatData {
 	s := &StatData{}
+	s.totalOps = 0
+	s.readBytes = 0
 	s.statChan = make(chan StatRecord, 1000)
 	s.ackChan = make(chan int, 1)
 	go s.worker()
@@ -65,43 +69,35 @@ func (s *StatData) Record(readTime time.Duration, writeTime time.Duration, count
 	s.statChan <- StatRecord{RECORD_STATS, readTime, writeTime, count}
 }
 
+func (s *StatData) Current() {
+	s.statChan <- StatRecord{SHOW_CURRENT, 0, 0, 0}
+}
+
 func (s *StatData) worker() {
 	var rec StatRecord
-	tick := time.Tick(time.Second)
 	tickSeconds := 0
-	stats_running := false
+	statsRunning := false
 
 	for {
 		select {
-		case <- tick:
-			if stats_running == false {
-				break
-			}
-			elapsed := time.Since(s.startTime)
-			if elapsed.Seconds() != 0 {
-				tickSeconds++
-				fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
-					Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
-					Humanize(s.readBytes/int64(elapsed.Seconds()), 1),
-					Humanize(s.readBytes, 1))
-			}
 		case rec = <-s.statChan:
 			switch rec.op {
 			case START_STATS:
-				stats_running = true
+				statsRunning = true
 				s.startTime = time.Now()
 				s.ackChan <- 1
 			case STOP_STATS:
-				stats_running = false
-				fmt.Println()
-				s.endTime = time.Now()
+				if statsRunning {
+					s.endTime = time.Now()
+					s.elapsed = s.endTime.Sub(s.startTime)
+					statsRunning = false
+				}
 				s.ackChan <- 1
 			case DISPLAY_STATS:
-				elapsed := s.endTime.Sub(s.startTime)
-				fmt.Printf("Total Time: %s\n", elapsed)
+				fmt.Printf("\nTotal Time: %s\n", s.elapsed)
 				fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
-				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(elapsed.Seconds()), 1))
-				fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(elapsed.Seconds()), 1))
+				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
+				fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(s.elapsed.Seconds()), 1))
 				fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
 				fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
 				s.ackChan <- 1
@@ -112,10 +108,23 @@ func (s *StatData) worker() {
 				s.writeTime = 0
 				s.ackChan <- 1
 			case RECORD_STATS:
-				s.readBytes += rec.byteCount
-				s.readTime += rec.readTime
-				s.writeTime += rec.writeTime
-				s.totalOps++
+				if statsRunning {
+					s.readBytes += rec.byteCount
+					s.readTime += rec.readTime
+					s.writeTime += rec.writeTime
+					s.totalOps++
+				}
+			case SHOW_CURRENT:
+				if statsRunning {
+					elapsed := time.Since(s.startTime)
+					if elapsed.Seconds() != 0 {
+						tickSeconds++
+						fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
+							Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
+							Humanize(s.readBytes/int64(elapsed.Seconds()), 1),
+							Humanize(s.readBytes, 1))
+					}
+				}
 			}
 		}
 	}

@@ -3,15 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type WorkerConfig struct {
-	SourceName	string
-	TargetName	string
-	Options		string
+	SourceName string
+	TargetName string
+	Options    string
 
 	// Values converted from Options string
 	sizeToUse    int64
@@ -21,9 +21,13 @@ type WorkerConfig struct {
 	outputOffset int64
 
 	// State of worker
-	srcFile		*os.File
-	tgtFile		*os.File
-	acChan		chan AccessControl
+	srcFile      *os.File
+	tgtFile      *os.File
+	acChan       chan AccessControl
+	thrComplete  chan int
+	workerFinish chan int
+	keepRunning  bool
+	stats        *StatData
 }
 
 func (w *WorkerConfig) parseOptions() bool {
@@ -67,6 +71,10 @@ func (w *WorkerConfig) parseOptions() bool {
 				fmt.Printf("Invalid offset: %s\n", kvPair[1])
 				return false
 			} else {
+				// Right now the code only supports setting the input and output
+				// position to the same value. It would take much if desired to
+				// have something like "i_off" and "o_off" to represent the
+				// two different values.
 				w.inputOffset = c
 				w.outputOffset = c
 			}
@@ -111,18 +119,11 @@ func (w *WorkerConfig) Validate() bool {
 	return true
 }
 
-func (w *WorkerConfig) Start(stats *StatData) {
+func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 	var err error
 
-	defer func() {
-		if w.srcFile != nil {
-			w.srcFile.Close()
-		}
-		if w.tgtFile != nil {
-			w.tgtFile.Close()
-		}
-	}()
-
+	w.workerFinish = exitChan
+	w.keepRunning = true
 	fmt.Printf("WorkerConfig Start called\n")
 	fmt.Printf("    Threads: %d\n    Block Size: %s\n    Copy Size: %s\n    From: %s\n    To: %s\n",
 		w.threads, Humanize(int64(w.blkSize), 1), Humanize(w.sizeToUse, 1),
@@ -132,20 +133,22 @@ func (w *WorkerConfig) Start(stats *StatData) {
 		return
 	}
 
-	if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR | os.O_CREATE, 0666); err != nil {
+	if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR|os.O_CREATE, 0666); err != nil {
 		fmt.Printf("Failed to open for writing: %s, err=%s\n", w.TargetName, err)
 		return
 	}
 
 	w.acChan = make(chan AccessControl, 1000)
-	completeChan := make(chan int, 10)
+	w.thrComplete = make(chan int, 10)
+	w.stats = stats
 	go w.blockControl()
 	for i := 0; i < w.threads; i++ {
-		go w.readWriteWorker(i, stats, completeChan)
+		go w.readWriteWorker(i, stats)
 	}
-	for i := 0; i < w.threads; i++ {
-		<- completeChan
-	}
+}
+
+func (w *WorkerConfig) Stop() {
+	w.keepRunning = false
 }
 
 type AccessControl struct {
@@ -159,7 +162,7 @@ func (w *WorkerConfig) blockControl() {
 	var outputCurPos = w.outputOffset
 	var ac AccessControl
 
-	for inputCurPos < w.sizeToUse {
+	for inputCurPos < w.sizeToUse && w.keepRunning {
 		ac.inputSeekPos = inputCurPos
 		ac.outputSeekPos = outputCurPos
 		ac.stopAccess = false
@@ -167,13 +170,30 @@ func (w *WorkerConfig) blockControl() {
 		inputCurPos += int64(w.blkSize)
 		outputCurPos += int64(w.blkSize)
 	}
+
+	// Send the stop signal to the threads
 	for i := 0; i < w.threads; i++ {
 		ac.stopAccess = true
 		w.acChan <- ac
 	}
+
+	// Wait for them to finish
+	for i := 0; i < w.threads; i++ {
+		<-w.thrComplete
+	}
+	w.stats.Stop()
+
+	if w.srcFile != nil {
+		w.srcFile.Close()
+	}
+	if w.tgtFile != nil {
+		w.tgtFile.Close()
+	}
+	// Let the main thread know we've tidied everything up.
+	w.workerFinish <- 1
 }
 
-func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData, completeChan chan int) {
+func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 	var ac AccessControl
 	var readElapsed time.Duration
 	var writeElapsed time.Duration
@@ -182,10 +202,10 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData, completeChan 
 	buf := make([]byte, w.blkSize)
 
 	defer func() {
-		completeChan <- thrId
+		w.thrComplete <- thrId
 	}()
 	for {
-		ac = <- w.acChan
+		ac = <-w.acChan
 		if ac.stopAccess {
 			return
 		}
