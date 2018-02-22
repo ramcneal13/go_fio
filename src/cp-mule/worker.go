@@ -287,6 +287,6 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 			return
 		}
 		endTime = time.Now()
-		blockedIO += stats.Record(readElapsed, endTime.Sub(startTime), int64(len(buf)))
+		blockedIO += stats.Record(readElapsed, endTime.Sub(startTime), int64(ac.blkSize))
 	}
 }
