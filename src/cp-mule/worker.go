@@ -140,6 +140,9 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 	fmt.Printf("    Threads: %d\n    Block Size: %s\n    Copy Size: %s\n    From: %s\n    To: %s\n",
 		w.threads, Humanize(int64(w.blkSize), 1), Humanize(w.sizeToUse, 1),
 		w.SourceName, w.TargetName)
+	if w.alternateSize != 0 {
+		fmt.Printf("    Alternate Block: %s\n", Humanize(int64(w.alternateSize), 1))
+	}
 	if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY, 0666); err != nil {
 		fmt.Printf("Failed to open: %s, err=%s\n", w.SourceName, err)
 		return

@@ -111,8 +111,11 @@ func (s *StatData) worker() {
 		case DISPLAY_STATS:
 			fmt.Printf("\nTotal Time: %s\n", s.elapsed)
 			fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
-			fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
-			fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(s.elapsed.Seconds()), 1))
+			elapsed := int64(s.elapsed.Seconds())
+			if elapsed != 0 {
+				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
+				fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(s.elapsed.Seconds()), 1))
+			}
 			fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
 			fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
 			s.ackChan <- 1
