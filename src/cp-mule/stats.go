@@ -76,6 +76,9 @@ func (s *StatData) Current() {
 func (s *StatData) worker() {
 	tickSeconds := 0
 	statsRunning := false
+	var lastRead time.Duration = 0
+	var lastWrite time.Duration = 0
+	var lastOps int64 = 0
 
 	for rec := range s.statChan {
 
@@ -117,10 +120,15 @@ func (s *StatData) worker() {
 				elapsed := int64(time.Since(s.startTime).Seconds())
 				if elapsed != 0 {
 					tickSeconds++
-					fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
-						Humanize(s.totalOps/int64(elapsed), 1),
-						Humanize(s.readBytes/int64(elapsed), 1),
-						Humanize(s.readBytes, 1))
+					fmt.Printf("[%s] xfer:%s IOPS:%s, r_lat:%s w_lat:%s\r",
+						SecsToHMSstr(tickSeconds),
+						Humanize(s.readBytes, 1),
+						Humanize((s.totalOps-lastOps)/elapsed, 1),
+						(s.readTime-lastRead)/time.Duration(elapsed),
+						(s.writeTime-lastWrite)/time.Duration(elapsed))
+					lastOps = s.totalOps
+					lastRead = s.readTime
+					lastWrite = s.writeTime
 				}
 			}
 		}
