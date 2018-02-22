@@ -39,7 +39,7 @@ func StartStats() *StatData {
 	s := &StatData{}
 	s.totalOps = 0
 	s.readBytes = 0
-	s.statChan = make(chan StatRecord, 1000)
+	s.statChan = make(chan StatRecord, 10000)
 	s.ackChan = make(chan int, 1)
 	go s.worker()
 	return s

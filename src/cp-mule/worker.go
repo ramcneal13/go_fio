@@ -211,7 +211,7 @@ func (w *WorkerConfig) blockControl() {
 	}
 	w.stats.Stop()
 	if blockedIO != 0 {
-		fmt.Printf("Blocked I/O count: %d\n", blockedIO)
+		fmt.Printf("\nBlocked I/O count: %d\n", blockedIO)
 	}
 
 	if w.srcFile != nil {
