@@ -117,19 +117,16 @@ func (s *StatData) worker() {
 			}
 		case SHOW_CURRENT:
 			if statsRunning {
-				elapsed := int64(time.Since(s.startTime).Seconds())
-				if elapsed != 0 {
-					tickSeconds++
-					fmt.Printf("[%s] xfer:%s IOPS:%s, r_lat:%s w_lat:%s\r",
-						SecsToHMSstr(tickSeconds),
-						Humanize(s.readBytes, 1),
-						Humanize((s.totalOps-lastOps)/elapsed, 1),
-						(s.readTime-lastRead)/time.Duration(elapsed),
-						(s.writeTime-lastWrite)/time.Duration(elapsed))
-					lastOps = s.totalOps
-					lastRead = s.readTime
-					lastWrite = s.writeTime
-				}
+				tickSeconds++
+				fmt.Printf("[%s] xfer:%s IOPS:%s, r_lat:%s w_lat:%s        \r",
+					SecsToHMSstr(tickSeconds),
+					Humanize(s.readBytes, 1),
+					Humanize(s.totalOps-lastOps, 1),
+					(s.readTime-lastRead)/time.Duration(s.totalOps-lastOps),
+					(s.writeTime-lastWrite)/time.Duration(s.totalOps-lastOps))
+				lastOps = s.totalOps
+				lastRead = s.readTime
+				lastWrite = s.writeTime
 			}
 		}
 	}
