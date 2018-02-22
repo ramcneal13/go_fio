@@ -179,14 +179,10 @@ func (w *WorkerConfig) blockControl() {
 	}
 
 	// Wait for them to finish
-	blockedIO := 0
 	for i := 0; i < w.threads; i++ {
-		blockedIO += <-w.thrComplete
+		<-w.thrComplete
 	}
 	w.stats.Stop()
-	if blockedIO != 0 {
-		fmt.Printf("\n%d calls to blocked acChan\n", blockedIO)
-	}
 
 	if w.srcFile != nil {
 		w.srcFile.Close()
@@ -199,15 +195,13 @@ func (w *WorkerConfig) blockControl() {
 }
 
 func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
-	var ac AccessControl
 	var readElapsed time.Duration
 	var startTime time.Time
 	var endTime time.Time
 	buf := make([]byte, w.blkSize)
-	blockedIO := 0
 
 	defer func() {
-		w.thrComplete <- blockedIO
+		w.thrComplete <- thrId
 	}()
 
 	//
@@ -224,24 +218,28 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 	// the problem no longer happens. Leaving this code here as a reminder of why and how this was
 	// determined.
 	//
-	countAfterFirst := false
-	for {
-		doSelect := true
-		countOnce := true
-		for doSelect {
-			select {
-			case ac = <-w.acChan:
-				if ac.stopAccess {
-					return
-				}
-				countAfterFirst = true
-				doSelect = false
-			default:
-				if countAfterFirst && countOnce {
-					countOnce = false
-					blockedIO++
-				}
-			}
+	// countAfterFirst := false
+	// for {
+	//	 doSelect := true
+	//	 countOnce := true
+	//	 for doSelect {
+	//		select {
+	//		case ac = <-w.acChan:
+	//			if ac.stopAccess {
+	//				return
+	//			}
+	//			countAfterFirst = true
+	//			doSelect = false
+	//		default:
+	//			if countAfterFirst && countOnce {
+	//				countOnce = false
+	//				blockedIO++
+	//			}
+	//		}
+	//	}
+	for ac := range w.acChan {
+		if ac.stopAccess {
+			return
 		}
 
 		startTime = time.Now()

@@ -74,56 +74,53 @@ func (s *StatData) Current() {
 }
 
 func (s *StatData) worker() {
-	var rec StatRecord
 	tickSeconds := 0
 	statsRunning := false
 
-	for {
-		select {
-		case rec = <-s.statChan:
-			switch rec.op {
-			case START_STATS:
-				statsRunning = true
-				s.startTime = time.Now()
-				s.ackChan <- 1
-			case STOP_STATS:
-				if statsRunning {
-					s.endTime = time.Now()
-					s.elapsed = s.endTime.Sub(s.startTime)
-					statsRunning = false
-				}
-				s.ackChan <- 1
-			case DISPLAY_STATS:
-				fmt.Printf("\nTotal Time: %s\n", s.elapsed)
-				fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
-				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
-				fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(s.elapsed.Seconds()), 1))
-				fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
-				fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
-				s.ackChan <- 1
-			case CLEAR_STATS:
-				s.totalOps = 0
-				s.readBytes = 0
-				s.readTime = 0
-				s.writeTime = 0
-				s.ackChan <- 1
-			case RECORD_STATS:
-				if statsRunning {
-					s.readBytes += rec.byteCount
-					s.readTime += rec.readTime
-					s.writeTime += rec.writeTime
-					s.totalOps++
-				}
-			case SHOW_CURRENT:
-				if statsRunning {
-					elapsed := time.Since(s.startTime)
-					if elapsed.Seconds() != 0 {
-						tickSeconds++
-						fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
-							Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
-							Humanize(s.readBytes/int64(elapsed.Seconds()), 1),
-							Humanize(s.readBytes, 1))
-					}
+	for rec := range s.statChan {
+
+		switch rec.op {
+		case START_STATS:
+			statsRunning = true
+			s.startTime = time.Now()
+			s.ackChan <- 1
+		case STOP_STATS:
+			if statsRunning {
+				s.endTime = time.Now()
+				s.elapsed = s.endTime.Sub(s.startTime)
+				statsRunning = false
+			}
+			s.ackChan <- 1
+		case DISPLAY_STATS:
+			fmt.Printf("\nTotal Time: %s\n", s.elapsed)
+			fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
+			fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
+			fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(s.elapsed.Seconds()), 1))
+			fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
+			fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
+			s.ackChan <- 1
+		case CLEAR_STATS:
+			s.totalOps = 0
+			s.readBytes = 0
+			s.readTime = 0
+			s.writeTime = 0
+			s.ackChan <- 1
+		case RECORD_STATS:
+			if statsRunning {
+				s.readBytes += rec.byteCount
+				s.readTime += rec.readTime
+				s.writeTime += rec.writeTime
+				s.totalOps++
+			}
+		case SHOW_CURRENT:
+			if statsRunning {
+				elapsed := time.Since(s.startTime)
+				if elapsed.Seconds() != 0 {
+					tickSeconds++
+					fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
+						Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
+						Humanize(s.readBytes/int64(elapsed.Seconds()), 1),
+						Humanize(s.readBytes, 1))
 				}
 			}
 		}
