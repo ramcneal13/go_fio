@@ -114,12 +114,12 @@ func (s *StatData) worker() {
 			}
 		case SHOW_CURRENT:
 			if statsRunning {
-				elapsed := time.Since(s.startTime)
-				if elapsed.Seconds() != 0 {
+				elapsed := int64(time.Since(s.startTime).Seconds())
+				if elapsed != 0 {
 					tickSeconds++
 					fmt.Printf("[%s] IOPS: %s, BW: %s, xfer'd: %s\r", SecsToHMSstr(tickSeconds),
-						Humanize(s.totalOps/int64(elapsed.Seconds()), 1),
-						Humanize(s.readBytes/int64(elapsed.Seconds()), 1),
+						Humanize(s.totalOps/int64(elapsed), 1),
+						Humanize(s.readBytes/int64(elapsed), 1),
 						Humanize(s.readBytes, 1))
 				}
 			}
