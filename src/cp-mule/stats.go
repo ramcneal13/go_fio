@@ -65,8 +65,22 @@ func (s *StatData) Clear() {
 	<- s.ackChan
 }
 
-func (s *StatData) Record(readTime time.Duration, writeTime time.Duration, count int64) {
-	s.statChan <- StatRecord{RECORD_STATS, readTime, writeTime, count}
+func (s *StatData) Record(readTime time.Duration, writeTime time.Duration, count int64) int {
+	countOnce := true
+	blockedIO := 0
+	sendOne := true
+	for sendOne {
+		select {
+		case s.statChan <- StatRecord{RECORD_STATS, readTime, writeTime, count}:
+			sendOne = false
+		default:
+			if countOnce {
+				countOnce = false
+				blockedIO++
+			}
+		}
+	}
+	return blockedIO
 }
 
 func (s *StatData) Current() {

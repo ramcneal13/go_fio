@@ -14,11 +14,12 @@ type WorkerConfig struct {
 	Options    string
 
 	// Values converted from Options string
-	sizeToUse    int64
-	threads      int
-	blkSize      int
-	inputOffset  int64
-	outputOffset int64
+	sizeToUse     int64
+	threads       int
+	blkSize       int
+	inputOffset   int64
+	outputOffset  int64
+	alternateSize int
 
 	// State of worker
 	srcFile      *os.File
@@ -36,6 +37,7 @@ func (w *WorkerConfig) parseOptions() bool {
 	w.threads = 32
 	w.inputOffset = 0
 	w.outputOffset = 0
+	w.alternateSize = 0
 
 	opts := strings.Split(w.Options, ",")
 	for _, kvStr := range opts {
@@ -78,10 +80,20 @@ func (w *WorkerConfig) parseOptions() bool {
 				w.inputOffset = c
 				w.outputOffset = c
 			}
+		case "alternate":
+			if c, err := blkStringToInt64(kvPair[1]); err == false {
+				fmt.Printf("Invalid alternate size: %s\n", kvPair[1])
+			} else {
+				w.alternateSize = int(c)
+			}
 		default:
 			fmt.Printf("Unknown key: %s\n", kvPair[0])
 			return false
 		}
+	}
+	if w.alternateSize > w.blkSize {
+		fmt.Printf("alternate(%d) is larger than blksize(%d)\n",
+			w.alternateSize, w.blkSize)
 	}
 	return true
 }
@@ -155,6 +167,7 @@ func (w *WorkerConfig) Stop() {
 type AccessControl struct {
 	inputSeekPos  int64
 	outputSeekPos int64
+	blkSize       int
 	stopAccess    bool
 }
 
@@ -162,14 +175,24 @@ func (w *WorkerConfig) blockControl() {
 	var inputCurPos = w.inputOffset
 	var outputCurPos = w.outputOffset
 	var ac AccessControl
+	flip := true
 
 	for inputCurPos < w.sizeToUse && w.keepRunning {
 		ac.inputSeekPos = inputCurPos
 		ac.outputSeekPos = outputCurPos
 		ac.stopAccess = false
+		ac.blkSize = w.blkSize
+		if w.alternateSize != 0 {
+			if flip {
+				flip = false
+				ac.blkSize = w.alternateSize
+			} else {
+				flip = true
+			}
+		}
 		w.acChan <- ac
-		inputCurPos += int64(w.blkSize)
-		outputCurPos += int64(w.blkSize)
+		inputCurPos += int64(ac.blkSize)
+		outputCurPos += int64(ac.blkSize)
 	}
 
 	// Send the stop signal to the threads
@@ -179,10 +202,14 @@ func (w *WorkerConfig) blockControl() {
 	}
 
 	// Wait for them to finish
+	blockedIO := 0
 	for i := 0; i < w.threads; i++ {
-		<-w.thrComplete
+		blockedIO += <-w.thrComplete
 	}
 	w.stats.Stop()
+	if blockedIO != 0 {
+		fmt.Printf("Blocked I/O count: %d\n", blockedIO)
+	}
 
 	if w.srcFile != nil {
 		w.srcFile.Close()
@@ -199,9 +226,10 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 	var startTime time.Time
 	var endTime time.Time
 	buf := make([]byte, w.blkSize)
+	blockedIO := 0
 
 	defer func() {
-		w.thrComplete <- thrId
+		w.thrComplete <- blockedIO
 	}()
 
 	//
@@ -237,24 +265,25 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 	//			}
 	//		}
 	//	}
+
 	for ac := range w.acChan {
 		if ac.stopAccess {
 			return
 		}
 
 		startTime = time.Now()
-		if cnt, err := w.srcFile.ReadAt(buf, ac.inputSeekPos); err != nil {
+		if cnt, err := w.srcFile.ReadAt(buf[0:ac.blkSize], ac.inputSeekPos); err != nil {
 			fmt.Printf("Read(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
 			return
 		}
 		endTime = time.Now()
 		readElapsed = endTime.Sub(startTime)
 		startTime = time.Now()
-		if cnt, err := w.tgtFile.WriteAt(buf, ac.outputSeekPos); err != nil {
+		if cnt, err := w.tgtFile.WriteAt(buf[0:ac.blkSize], ac.outputSeekPos); err != nil {
 			fmt.Printf("Write(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
 			return
 		}
 		endTime = time.Now()
-		stats.Record(readElapsed, endTime.Sub(startTime), int64(len(buf)))
+		blockedIO += stats.Record(readElapsed, endTime.Sub(startTime), int64(len(buf)))
 	}
 }
