@@ -133,7 +133,7 @@ func (s *StatData) worker() {
 				s.totalOps++
 			}
 		case SHOW_CURRENT:
-			if statsRunning {
+			if statsRunning && (s.totalOps-lastOps) != 0 {
 				tickSeconds++
 				fmt.Printf("[%s] xfer:%s IOPS:%s, r_lat:%s w_lat:%s        \r",
 					SecsToHMSstr(tickSeconds),

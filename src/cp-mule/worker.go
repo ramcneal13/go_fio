@@ -20,6 +20,7 @@ type WorkerConfig struct {
 	inputOffset   int64
 	outputOffset  int64
 	alternateSize int
+	openFlags     int
 
 	// State of worker
 	srcFile      *os.File
@@ -86,6 +87,14 @@ func (w *WorkerConfig) parseOptions() bool {
 			} else {
 				w.alternateSize = int(c)
 			}
+		case "flags":
+			flagPairs := strings.Split(kvPair[1], ":")
+			for _, flag := range flagPairs {
+				switch flag {
+				case "sync":
+					w.openFlags |= os.O_SYNC
+				}
+			}
 		default:
 			fmt.Printf("Unknown key: %s\n", kvPair[0])
 			return false
@@ -143,12 +152,13 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 	if w.alternateSize != 0 {
 		fmt.Printf("    Alternate Block: %s\n", Humanize(int64(w.alternateSize), 1))
 	}
-	if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY, 0666); err != nil {
+
+	if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY|w.openFlags, 0666); err != nil {
 		fmt.Printf("Failed to open: %s, err=%s\n", w.SourceName, err)
 		return
 	}
 
-	if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR|os.O_CREATE, 0666); err != nil {
+	if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR|os.O_CREATE|w.openFlags, 0666); err != nil {
 		fmt.Printf("Failed to open for writing: %s, err=%s\n", w.TargetName, err)
 		return
 	}
