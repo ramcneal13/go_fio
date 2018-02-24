@@ -129,7 +129,7 @@ func (w *WorkerConfig) Validate() bool {
 	} else if trueSize, err = fp.Seek(0, 2); err != nil {
 		fmt.Printf("Failed to get size of source: %s\n", err)
 		return false
-	} else {
+	} else if trueSize != 0 {
 		if w.sizeToUse == 0 || w.sizeToUse >= trueSize {
 			w.sizeToUse = trueSize
 		}
@@ -152,6 +152,9 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 	if w.alternateSize != 0 {
 		fmt.Printf("    Alternate Block: %s\n", Humanize(int64(w.alternateSize), 1))
 	}
+	if w.openFlags != 0 {
+		fmt.Printf("    Open flags: %s\n", flagsToStr(w.openFlags))
+	}
 
 	if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY|w.openFlags, 0666); err != nil {
 		fmt.Printf("Failed to open: %s, err=%s\n", w.SourceName, err)
@@ -171,6 +174,20 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 	for i := 0; i < w.threads; i++ {
 		go w.readWriteWorker(i, stats)
 	}
+}
+
+func flagsToStr(flags int) string {
+	flagStr := map[int]string{
+		os.O_SYNC:  "O_SYNC",
+		os.O_TRUNC: "O_TRUNC",
+	}
+	rtnVal := ""
+	for k, v := range flagStr {
+		if (flags & k) != 0 {
+			rtnVal += " " + v
+		}
+	}
+	return rtnVal
 }
 
 func (w *WorkerConfig) Stop() {
