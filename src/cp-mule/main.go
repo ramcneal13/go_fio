@@ -32,7 +32,7 @@ func main() {
 	if configFile != "" {
 		fmt.Println("Need to add code to parse configuration file")
 		os.Exit(1)
-	} else if source != "" && target != "" {
+	} else if source != "" || target != "" {
 		w := &WorkerConfig{SourceName: source, TargetName: target, Options: optionStr}
 		listOfWorkers = append(listOfWorkers, w)
 	} else {

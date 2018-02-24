@@ -24,7 +24,9 @@ type WorkerConfig struct {
 
 	// State of worker
 	srcFile      *os.File
+	ignoreSrc    bool
 	tgtFile      *os.File
+	ignoreTgt    bool
 	acChan       chan AccessControl
 	thrComplete  chan int
 	workerFinish chan int
@@ -123,16 +125,26 @@ func (w *WorkerConfig) Validate() bool {
 	if w.parseOptions() == false {
 		return false
 	}
-	if fp, err = os.OpenFile(w.SourceName, os.O_RDONLY, 0666); err != nil {
-		fmt.Printf("Source error: %s\n", err)
-		return false
-	} else if trueSize, err = fp.Seek(0, 2); err != nil {
-		fmt.Printf("Failed to get size of source: %s\n", err)
-		return false
-	} else if trueSize != 0 {
-		if w.sizeToUse == 0 || w.sizeToUse >= trueSize {
-			w.sizeToUse = trueSize
+	if w.SourceName != "" {
+		if fp, err = os.OpenFile(w.SourceName, os.O_RDONLY, 0666); err != nil {
+			fmt.Printf("Source error: %s\n", err)
+			return false
+		} else if trueSize, err = fp.Seek(0, 2); err != nil {
+			fmt.Printf("Failed to get size of source: %s\n", err)
+			return false
+		} else if trueSize != 0 {
+			if w.sizeToUse == 0 || w.sizeToUse >= trueSize {
+				w.sizeToUse = trueSize
+			}
 		}
+		w.ignoreSrc = false
+	} else {
+		w.ignoreSrc = true
+	}
+	if w.TargetName == "" {
+		w.ignoreTgt = true
+	} else {
+		w.ignoreTgt = false
 	}
 	w.srcFile = nil
 	w.tgtFile = nil
@@ -156,14 +168,18 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 		fmt.Printf("    Open flags: %s\n", flagsToStr(w.openFlags))
 	}
 
-	if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY|w.openFlags, 0666); err != nil {
-		fmt.Printf("Failed to open: %s, err=%s\n", w.SourceName, err)
-		return
+	if w.ignoreSrc == false {
+		if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY|w.openFlags, 0666); err != nil {
+			fmt.Printf("Failed to open: %s, err=%s\n", w.SourceName, err)
+			return
+		}
 	}
 
-	if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR|os.O_CREATE|w.openFlags, 0666); err != nil {
-		fmt.Printf("Failed to open for writing: %s, err=%s\n", w.TargetName, err)
-		return
+	if w.ignoreTgt == false {
+		if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR|os.O_CREATE|w.openFlags, 0666); err != nil {
+			fmt.Printf("Failed to open for writing: %s, err=%s\n", w.TargetName, err)
+			return
+		}
 	}
 
 	w.acChan = make(chan AccessControl, 10000)
@@ -301,19 +317,29 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 			return
 		}
 
-		startTime = time.Now()
-		if cnt, err := w.srcFile.ReadAt(buf[0:ac.blkSize], ac.inputSeekPos); err != nil {
-			fmt.Printf("Read(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
-			return
+		if w.ignoreSrc == false {
+			startTime = time.Now()
+			if cnt, err := w.srcFile.ReadAt(buf[0:ac.blkSize], ac.inputSeekPos); err != nil {
+				fmt.Printf("Read(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
+				return
+			}
+			endTime = time.Now()
+			readElapsed = endTime.Sub(startTime)
+		} else {
+			readElapsed = 0
 		}
-		endTime = time.Now()
-		readElapsed = endTime.Sub(startTime)
-		startTime = time.Now()
-		if cnt, err := w.tgtFile.WriteAt(buf[0:ac.blkSize], ac.outputSeekPos); err != nil {
-			fmt.Printf("Write(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
-			return
+
+		if w.ignoreTgt == false {
+			startTime = time.Now()
+			if cnt, err := w.tgtFile.WriteAt(buf[0:ac.blkSize], ac.outputSeekPos); err != nil {
+				fmt.Printf("Write(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
+				return
+			}
+			endTime = time.Now()
+		} else {
+			startTime = time.Now()
+			endTime = startTime
 		}
-		endTime = time.Now()
 		blockedIO += stats.Record(readElapsed, endTime.Sub(startTime), int64(ac.blkSize))
 	}
 }
