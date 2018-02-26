@@ -6,10 +6,10 @@ import (
 )
 
 type StatData struct {
-	totalOps	int64
-	readBytes	int64	// No need to keep write bytes since they'll be the same as read
-	readTime	time.Duration
-	writeTime	time.Duration
+	totalOps   int64
+	totalBytes int64
+	readTime   time.Duration
+	writeTime  time.Duration
 
 	startTime time.Time
 	endTime   time.Time
@@ -38,7 +38,7 @@ const (
 func StartStats() *StatData {
 	s := &StatData{}
 	s.totalOps = 0
-	s.readBytes = 0
+	s.totalBytes = 0
 	s.statChan = make(chan StatRecord, 10000)
 	s.ackChan = make(chan int, 1)
 	go s.worker()
@@ -110,34 +110,40 @@ func (s *StatData) worker() {
 			s.ackChan <- 1
 		case DISPLAY_STATS:
 			fmt.Printf("\nTotal Time: %s\n", s.elapsed)
-			fmt.Printf("Total Bytes: %s\n", Humanize(s.readBytes, 1))
+			fmt.Printf("Total Bytes: %s\n", Humanize(s.totalBytes, 1))
 			elapsed := int64(s.elapsed.Seconds())
 			if elapsed != 0 {
 				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
-				fmt.Printf("Throughput: %s\n", Humanize(s.readBytes/int64(s.elapsed.Seconds()), 1))
+				fmt.Printf("Throughput: %s\n", Humanize(s.totalBytes/int64(s.elapsed.Seconds()), 1))
 			}
 			fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
 			fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
 			s.ackChan <- 1
 		case CLEAR_STATS:
 			s.totalOps = 0
-			s.readBytes = 0
+			s.totalBytes = 0
 			s.readTime = 0
 			s.writeTime = 0
 			s.ackChan <- 1
 		case RECORD_STATS:
 			if statsRunning {
-				s.readBytes += rec.byteCount
-				s.readTime += rec.readTime
-				s.writeTime += rec.writeTime
-				s.totalOps++
+				if rec.readTime != 0 {
+					s.readTime += rec.readTime
+					s.totalBytes += rec.byteCount
+					s.totalOps++
+				}
+				if rec.writeTime != 0 {
+					s.writeTime += rec.writeTime
+					s.totalBytes += rec.byteCount
+					s.totalOps++
+				}
 			}
 		case SHOW_CURRENT:
 			if statsRunning && (s.totalOps-lastOps) != 0 {
 				tickSeconds++
 				fmt.Printf("[%s] xfer:%s IOPS:%s, r_lat:%s w_lat:%s        \r",
 					SecsToHMSstr(tickSeconds),
-					Humanize(s.readBytes, 1),
+					Humanize(s.totalBytes, 1),
 					Humanize(s.totalOps-lastOps, 1),
 					(s.readTime-lastRead)/time.Duration(s.totalOps-lastOps),
 					(s.writeTime-lastWrite)/time.Duration(s.totalOps-lastOps))
