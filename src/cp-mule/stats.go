@@ -127,14 +127,13 @@ func (s *StatData) worker() {
 			s.ackChan <- 1
 		case RECORD_STATS:
 			if statsRunning {
+				s.totalBytes += rec.byteCount
 				if rec.readTime != 0 {
 					s.readTime += rec.readTime
-					s.totalBytes += rec.byteCount
 					s.totalOps++
 				}
 				if rec.writeTime != 0 {
 					s.writeTime += rec.writeTime
-					s.totalBytes += rec.byteCount
 					s.totalOps++
 				}
 			}
