@@ -11,17 +11,18 @@ import (
 )
 
 const (
-	Rwrand      = "rw"
-	ReadSeq     = "read"
-	ReadRand    = "randread"
-	WriteSeq    = "write"
-	WriteRand   = "randwrite"
-	Rwseq       = "rwseq"
-	PatternZero = "zero"
-	PatternRand = "rand"
-	PatternIncr = "incr"
-	PatternLCG  = "lcg"
-	None        = "none"
+	Rwrand       = "rw"
+	ReadSeq      = "read"
+	ReadRand     = "randread"
+	WriteSeq     = "write"
+	WriteRand    = "randwrite"
+	Rwseq        = "rwseq"
+	PatternZero  = "zero"
+	PatternRand  = "rand"
+	PatternIncr  = "incr"
+	PatternLCG   = "lcg"
+	RwrandVerify = "rwv"
+	None         = "none"
 )
 const (
 	_           = iota
@@ -32,7 +33,10 @@ const (
 	RwrandType
 	RwseqType
 	ReadBaseType
+	ReadBaseVerifyType
 	WriteBaseType
+	WriteBaseVerifyType
+	RwrandVerifyType
 	NoneType
 	StopType // Used to halt fileFill loop jobs
 )
@@ -65,6 +69,8 @@ type JobData struct {
 	Linear             string
 	Slave_Host         string
 	Intermediate_Stats string
+	Save_On_Create     bool
+	Force_Fill         bool
 
 	// To make things easier for the user certain values
 	// in the config file need to be processed beyond
@@ -100,6 +106,7 @@ func init() {
 	accessType[WriteRand] = WriteRandType
 	accessType[Rwrand] = RwrandType
 	accessType[Rwseq] = RwseqType
+	accessType[RwrandVerify] = RwrandVerifyType
 	accessType[None] = NoneType
 	accessStrMap = map[int]string{}
 	accessStrMap[ReadSeqType] = ReadSeq
@@ -108,6 +115,7 @@ func init() {
 	accessStrMap[WriteRandType] = WriteRand
 	accessStrMap[RwrandType] = Rwrand
 	accessStrMap[RwseqType] = Rwseq
+	accessStrMap[RwrandVerifyType] = RwrandVerify
 	accessStrMap[NoneType] = None
 }
 

@@ -1,8 +1,8 @@
 package main
 
 import (
-	"time"
 	"fmt"
+	"time"
 )
 
 type StatData struct {
@@ -19,10 +19,10 @@ type StatData struct {
 }
 
 type StatRecord struct {
-	op			int
-	readTime	time.Duration
-	writeTime	time.Duration
-	byteCount	int64
+	op        int
+	readTime  time.Duration
+	writeTime time.Duration
+	byteCount int64
 }
 
 //noinspection ALL,GoSnakeCaseUsage
@@ -46,23 +46,23 @@ func StartStats() *StatData {
 }
 
 func (s *StatData) Start() {
-	s.statChan <- StatRecord{START_STATS, 0, 0, 0 }
-	<- s.ackChan
+	s.statChan <- StatRecord{START_STATS, 0, 0, 0}
+	<-s.ackChan
 }
 
 func (s *StatData) Stop() {
-	s.statChan <- StatRecord{STOP_STATS, 0, 0, 0 }
-	<- s.ackChan
+	s.statChan <- StatRecord{STOP_STATS, 0, 0, 0}
+	<-s.ackChan
 }
 
 func (s *StatData) Display() {
 	s.statChan <- StatRecord{DISPLAY_STATS, 0, 0, 0}
-	<- s.ackChan
+	<-s.ackChan
 }
 
 func (s *StatData) Clear() {
 	s.statChan <- StatRecord{CLEAR_STATS, 0, 0, 0}
-	<- s.ackChan
+	<-s.ackChan
 }
 
 func (s *StatData) Record(readTime time.Duration, writeTime time.Duration, count int64) int {
@@ -116,8 +116,10 @@ func (s *StatData) worker() {
 				fmt.Printf("IOPS: %s\n", Humanize(s.totalOps/int64(s.elapsed.Seconds()), 1))
 				fmt.Printf("Throughput: %s\n", Humanize(s.totalBytes/int64(s.elapsed.Seconds()), 1))
 			}
-			fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
-			fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
+			if s.totalOps != 0 {
+				fmt.Printf("Avg. Read Latency: %s\n", time.Duration(int64(s.readTime)/s.totalOps))
+				fmt.Printf("Avg. Write Latency: %s\n", time.Duration(int64(s.writeTime)/s.totalOps))
+			}
 			s.ackChan <- 1
 		case CLEAR_STATS:
 			s.totalOps = 0

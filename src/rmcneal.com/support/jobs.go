@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"reflect"
 	"time"
+	"unsafe"
 )
 
 type AccessData struct {
@@ -38,12 +40,15 @@ type Job struct {
 	bailOnError  bool
 	statIdx      int
 	validInit    bool
+	startTime    time.Time
 }
 
 func (j *Job) Init(tracker *tracking) error {
 	jd := j.JobParams
 	j.validInit = false
 	openFlags := os.O_RDWR
+	// Used when writing out validation blocks
+	j.startTime = time.Now()
 	if jd.Name[0] == '/' {
 		j.pathName = jd.Name
 	} else {
@@ -52,7 +57,7 @@ func (j *Job) Init(tracker *tracking) error {
 	if _, err := os.Stat(j.pathName); err == nil {
 		j.remove = false
 	} else {
-		j.remove = true
+		j.remove = !j.JobParams.Save_On_Create
 		openFlags |= os.O_CREATE
 	}
 	if j.fp, j.lastErr = os.OpenFile(j.pathName, openFlags, 0666); j.lastErr != nil {
@@ -83,16 +88,25 @@ func (j *Job) Init(tracker *tracking) error {
 			if pos, err := j.fp.Seek(0, 2); err != nil {
 				return err
 			} else {
-				if pos == 0 {
+				// Override the size of the device with what the user specified.
+				if j.JobParams.fileSize != 0 {
 					pos = j.JobParams.fileSize
 				}
 				if pos == 0 {
 					return fmt.Errorf("can't find the size of device")
 				}
 				j.JobParams.fileSize = pos
-				j.fp.Seek(0, 0)
 			}
 			j.JobParams.Size = Humanize(j.JobParams.fileSize, 1)
+
+			// This should really only be done if the configuration is going to request
+			// some veriant of a verify operation which will need the data pattern
+			// correctly laid out on the device.
+			if j.JobParams.Force_Fill {
+				j.fileFill(tracker)
+			}
+
+			j.fp.Seek(0, 0)
 		}
 	} else {
 		return err
@@ -249,7 +263,7 @@ func (j *Job) oneAD() AccessData {
 					access.lastBlk = access.sectionStart
 				}
 				ad.blk = access.lastBlk
-			case ReadRandType, WriteRandType, RwrandType:
+			case ReadRandType, WriteRandType, RwrandType, RwrandVerifyType:
 				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - int64(len(ad.buf))) / 512)
 				ad.blk = randBlk*512 + access.sectionStart
 				access.lastBlk = ad.blk
@@ -275,6 +289,12 @@ func (j *Job) oneAD() AccessData {
 				} else {
 					ad.op = WriteBaseType
 				}
+			case RwrandVerifyType:
+				if rand.Intn(100) < access.readPercent {
+					ad.op = ReadBaseVerifyType
+				} else {
+					ad.op = WriteBaseVerifyType
+				}
 			case NoneType:
 				ad.op = NoneType
 			}
@@ -287,6 +307,7 @@ func (j *Job) oneAD() AccessData {
 }
 
 func (j *Job) fileFill(tracker *tracking) {
+	j.JobParams.Force_Fill = true
 	fillJobs := 16
 	lastBlock := j.JobParams.fileSize
 	fillSize := int64(1024 * 1024)
@@ -298,7 +319,7 @@ func (j *Job) fileFill(tracker *tracking) {
 	}
 	go func() {
 		for curBlock := int64(0); curBlock < lastBlock; curBlock += fillSize {
-			ad := AccessData{op: WriteBaseType, buf: buf, blk: curBlock}
+			ad := AccessData{op: WriteBaseVerifyType, buf: buf, blk: curBlock}
 			j.nextBlks <- ad
 		}
 		for i := 0; i < fillJobs; i++ {
@@ -310,11 +331,12 @@ func (j *Job) fileFill(tracker *tracking) {
 	for {
 		select {
 		case <-ticker:
-			if fileinfo, err := j.fp.Stat(); err != nil {
+			if _, err := j.fp.Stat(); err != nil {
 				fmt.Printf("Stat(%s) failed; %s\n", err, j.JobParams.Name)
 				return
 			} else {
-				tracker.UpdateName(j.TargetName, fmt.Sprintf("-%.1f", float64(fileinfo.Size())/float64(lastBlock)*100.0))
+				tracker.UpdateName(j.TargetName, fmt.Sprintf("-%.1f",
+					float64(j.Stats.WriteBW)/float64(lastBlock)*100.0))
 			}
 		case <-j.thrCompletes:
 			fillJobs--
@@ -342,6 +364,10 @@ func opToString(op int) string {
 		return "Read"
 	case WriteBaseType:
 		return "Write"
+	case ReadBaseVerifyType:
+		return "ReadVerify"
+	case WriteBaseVerifyType:
+		return "WriteVerify"
 	case NoneType:
 		return "None"
 	default:
@@ -353,18 +379,71 @@ func (j *Job) Stop() {
 	j.threadRun = false
 }
 
+const (
+	MARKER_SIG = 0xdeadbeef
+)
+
+type markerBlock struct {
+	blockNumber int64
+	signature   uint32
+	tMarker     time.Time
+}
+
+func (j *Job) validateBuf(buf []byte, blockNum int64) bool {
+	slice := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+	for offset := 0; offset < len(buf); offset += 512 {
+		marker := (*markerBlock)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
+		if marker.signature != MARKER_SIG {
+			fmt.Printf("Invalid signature at block: 0x%x, offset: 0x%x\n", blockNum, offset)
+			return false
+		}
+
+		// Only check the timestamp if this instance prefilled the target. Else we're using a previous
+		// run which means this check is guaranteed to fail and that's not what's wanted.
+		if j.JobParams.Force_Fill && marker.tMarker != j.startTime {
+			fmt.Printf("Stale block: 0x%x\n", marker.blockNumber)
+			return false
+		}
+
+		if marker.blockNumber != blockNum {
+			fmt.Printf("Bad block at block/offset: 0x%x/%x, found 0x%x\n", blockNum, offset, marker.blockNumber)
+			return false
+		}
+		blockNum += 512
+	}
+	return true
+}
+
+func (j *Job) initBuf(buf []byte, blockNum int64) {
+
+	slice := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+	for offset := 0; offset < len(buf); offset += 512 {
+		marker := (*markerBlock)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
+		marker.blockNumber = blockNum
+		blockNum += 512
+		marker.signature = MARKER_SIG
+		marker.tMarker = j.startTime
+	}
+}
+
 func (j *Job) ioWorker(workId int) {
 	var statType int
+	var buf []byte
 	rpt := JobReport{JobID: workId, ReadErrors: 0, WriteErrors: 0, ReadIOs: 0, WriteIOs: 0}
 	opCnt := 0
 	for j.threadRun {
 		ad := <-j.nextBlks
 		ioStart := time.Now()
 		switch ad.op {
-		case ReadBaseType:
+		case ReadBaseType, ReadBaseVerifyType:
 			statType = StatRead
 			rpt.ReadIOs++
-			if _, err := j.fp.ReadAt(ad.buf, ad.blk); err != nil {
+			if ad.op == ReadBaseVerifyType {
+				buf = make([]byte, len(ad.buf))
+			} else {
+				buf = ad.buf
+			}
+			if _, err := j.fp.ReadAt(buf, ad.blk); err != nil {
 				rpt.ReadErrors++
 				if j.bailOnError {
 					fmt.Printf("ReadAt error(0x%x:0x%x)\n  : %s\n", ad.blk, len(ad.buf), err)
@@ -374,10 +453,21 @@ func (j *Job) ioWorker(workId int) {
 					continue
 				}
 			}
-		case WriteBaseType:
+			if ad.op == ReadBaseVerifyType {
+				if !j.validateBuf(buf, ad.blk) {
+					j.threadRun = false
+				}
+			}
+		case WriteBaseType, WriteBaseVerifyType:
 			statType = StatWrite
 			rpt.WriteIOs++
-			if _, err := j.fp.WriteAt(ad.buf, ad.blk); err != nil {
+			if ad.op == WriteBaseVerifyType {
+				buf = make([]byte, len(ad.buf))
+				j.initBuf(buf, ad.blk)
+			} else {
+				buf = ad.buf
+			}
+			if _, err := j.fp.WriteAt(buf, ad.blk); err != nil {
 				rpt.WriteErrors++
 				if j.bailOnError {
 					fmt.Printf("WriteAt error(0x%x:0x%x)\n  : %s\n", ad.blk, len(ad.buf), err)

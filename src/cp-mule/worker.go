@@ -23,15 +23,64 @@ type WorkerConfig struct {
 	openFlags     int
 
 	// State of worker
-	srcFile      *os.File
-	ignoreSrc    bool
-	tgtFile      *os.File
-	ignoreTgt    bool
+	srcFile      *WorkTarget
+	tgtFile      *WorkTarget
 	acChan       chan AccessControl
 	thrComplete  chan int
 	workerFinish chan int
 	keepRunning  bool
 	stats        *StatData
+}
+
+type WorkTarget struct {
+	fp *os.File
+}
+
+func NewWorkTarget(name string, flags int) *WorkTarget {
+	t := &WorkTarget{nil}
+	t.openFile(name, flags)
+	return t
+}
+
+func (t *WorkTarget) openFile(name string, flags int) {
+	var err error
+	if name == "" {
+		return
+	}
+	if t.fp, err = os.OpenFile(name, os.O_RDWR|flags|os.O_CREATE, 0666); err != nil {
+		fmt.Printf("Failed to open: %s, err=%s\n", name, err)
+		os.Exit(1)
+	}
+}
+
+func (t *WorkTarget) TimedRead(buf []byte, count int, pos int64) time.Duration {
+	if t.fp != nil {
+		start := time.Now()
+		if cc, err := t.fp.ReadAt(buf[0:count], pos); err != nil || cc != count {
+			t.fp.Close()
+			t.fp = nil
+		}
+		return time.Since(start)
+	} else {
+		return 0
+	}
+}
+
+func (t *WorkTarget) TimedWrite(buf []byte, count int, pos int64) time.Duration {
+	if t.fp != nil {
+		start := time.Now()
+		if cc, err := t.fp.WriteAt(buf[0:count], pos); err != nil || cc != count {
+			t.fp.Close()
+			t.fp = nil
+		}
+		return time.Since(start)
+	} else {
+		return 0
+	}
+}
+
+func (t *WorkTarget) Close() {
+	t.fp.Close()
 }
 
 func (w *WorkerConfig) parseOptions() bool {
@@ -137,14 +186,6 @@ func (w *WorkerConfig) Validate() bool {
 				w.sizeToUse = trueSize
 			}
 		}
-		w.ignoreSrc = false
-	} else {
-		w.ignoreSrc = true
-	}
-	if w.TargetName == "" {
-		w.ignoreTgt = true
-	} else {
-		w.ignoreTgt = false
 	}
 	w.srcFile = nil
 	w.tgtFile = nil
@@ -153,8 +194,6 @@ func (w *WorkerConfig) Validate() bool {
 }
 
 func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
-	var err error
-
 	w.workerFinish = exitChan
 	w.keepRunning = true
 	fmt.Printf("WorkerConfig Start called\n")
@@ -168,19 +207,8 @@ func (w *WorkerConfig) Start(stats *StatData, exitChan chan int) {
 		fmt.Printf("    Open flags: %s\n", flagsToStr(w.openFlags))
 	}
 
-	if w.ignoreSrc == false {
-		if w.srcFile, err = os.OpenFile(w.SourceName, os.O_RDONLY|w.openFlags, 0666); err != nil {
-			fmt.Printf("Failed to open: %s, err=%s\n", w.SourceName, err)
-			return
-		}
-	}
-
-	if w.ignoreTgt == false {
-		if w.tgtFile, err = os.OpenFile(w.TargetName, os.O_RDWR|os.O_CREATE|w.openFlags, 0666); err != nil {
-			fmt.Printf("Failed to open for writing: %s, err=%s\n", w.TargetName, err)
-			return
-		}
-	}
+	w.srcFile = NewWorkTarget(w.SourceName, w.openFlags)
+	w.tgtFile = NewWorkTarget(w.TargetName, w.openFlags)
 
 	w.acChan = make(chan AccessControl, 10000)
 	go w.blockControl()
@@ -257,20 +285,15 @@ func (w *WorkerConfig) blockControl() {
 		fmt.Printf("\nBlocked I/O count: %d\n", blockedIO)
 	}
 
-	if w.srcFile != nil {
-		w.srcFile.Close()
-	}
-	if w.tgtFile != nil {
-		w.tgtFile.Close()
-	}
+	w.srcFile.Close()
+	w.tgtFile.Close()
+
 	// Let the main thread know we've tidied everything up.
 	w.workerFinish <- 1
 }
 
 func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
-	var readElapsed time.Duration
-	var startTime time.Time
-	var endTime time.Time
+	var readElapsed, writeElapsed time.Duration
 	buf := make([]byte, w.blkSize)
 	blockedIO := 0
 
@@ -317,29 +340,9 @@ func (w *WorkerConfig) readWriteWorker(thrId int, stats *StatData) {
 			return
 		}
 
-		if w.ignoreSrc == false {
-			startTime = time.Now()
-			if cnt, err := w.srcFile.ReadAt(buf[0:ac.blkSize], ac.inputSeekPos); err != nil {
-				fmt.Printf("Read(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
-				return
-			}
-			endTime = time.Now()
-			readElapsed = endTime.Sub(startTime)
-		} else {
-			readElapsed = 0
-		}
+		readElapsed = w.srcFile.TimedRead(buf, ac.blkSize, ac.inputSeekPos)
+		writeElapsed = w.tgtFile.TimedWrite(buf, ac.blkSize, ac.outputSeekPos)
 
-		if w.ignoreTgt == false {
-			startTime = time.Now()
-			if cnt, err := w.tgtFile.WriteAt(buf[0:ac.blkSize], ac.outputSeekPos); err != nil {
-				fmt.Printf("Write(0x%x) failed, expected %d, got %d; err=%s\n", ac.inputSeekPos, w.blkSize, cnt, err)
-				return
-			}
-			endTime = time.Now()
-		} else {
-			startTime = time.Now()
-			endTime = startTime
-		}
-		blockedIO += stats.Record(readElapsed, endTime.Sub(startTime), int64(ac.blkSize))
+		blockedIO += stats.Record(readElapsed, writeElapsed, int64(ac.blkSize))
 	}
 }

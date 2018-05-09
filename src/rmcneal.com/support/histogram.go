@@ -127,6 +127,9 @@ func (d *DistroGraph) Graph() {
 	}
 	scalerCol := windowSize - 2 - distroCol - countCol
 	scaler := count / int64(scalerCol)
+	if scaler == 0 {
+		scaler = 1
+	}
 
 	if d.title != "" {
 		if len(d.title) <= scalerCol {

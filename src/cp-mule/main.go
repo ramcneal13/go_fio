@@ -2,8 +2,8 @@ package main
 
 import (
 	"flag"
-	"os"
 	"fmt"
+	"os"
 	"os/signal"
 	"time"
 )
@@ -18,7 +18,7 @@ func init() {
 	flag.StringVar(&source, "s", "", "Source to read (shorthand)")
 	flag.StringVar(&target, "target", "", "target to write")
 	flag.StringVar(&target, "t", "", "target to write (shorthand")
-	flag.StringVar(&optionStr, "options", "threads=32,blocksize=64k", "option string")
+	flag.StringVar(&optionStr, "options", "threads=32,blksize=64k", "option string")
 	flag.StringVar(&optionStr, "o", "threads=32,blksize=64k", "option string (shorthand)")
 	flag.StringVar(&configFile, "config", "", "configuration file")
 	flag.StringVar(&configFile, "c", "", "configuration file (shorthand)")
