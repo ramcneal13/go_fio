@@ -63,7 +63,7 @@ type reply struct {
 func clientOp() {
 	var wg sync.WaitGroup
 	buf := make([]byte, requestSize)
-	complete := time.After(time.Duration(runTime) * time.Second)
+	timeBomb := time.After(time.Duration(runTime) * time.Second)
 
 	conn, err := net.Dial("tcp", clientHost+":3600")
 	if err != nil {
@@ -85,7 +85,7 @@ func clientOp() {
 	go clientReader(conn, requestSize, &wg)
 	for {
 		select {
-		case <-complete:
+		case <-timeBomb:
 			return
 		default:
 			if rand.Intn(100) > readPercent {
@@ -163,9 +163,9 @@ func runDeamon() {
 func serverConn(conn net.Conn) {
 	var op request
 
-	dec := gob.NewDecoder(conn)
-	enc := gob.NewEncoder(conn)
-	err := dec.Decode(&op)
+	fromClient := gob.NewDecoder(conn)
+	err := fromClient.Decode(&op)
+	opType := make(chan int, 100)
 	if err != nil {
 		fmt.Printf("Decode error: %s\n", err)
 		return
@@ -178,9 +178,10 @@ func serverConn(conn net.Conn) {
 		fmt.Printf("Bad version: Expected %d, Got %d\n", Version, op.Vers)
 		return
 	}
+	go serverSend(conn, opType, op.Size)
 	buf := make([]byte, op.Size)
 	for {
-		err := dec.Decode(&op)
+		err := fromClient.Decode(&op)
 		if err != nil {
 			fmt.Printf("Decode op header error: %s\n", err)
 			return
@@ -191,30 +192,45 @@ func serverConn(conn net.Conn) {
 			fmt.Printf("App protocol error in loop\n")
 			return
 		case ReadOp:
-			err = enc.Encode(reply{ReadReply, op.Size})
-			if err != nil {
-				fmt.Printf("Encode of Read reply header: %s\n", err)
-				return
-			}
-			err = enc.Encode(&buf)
-			if err != nil {
-				fmt.Printf("Encode buf error: %s\n", err)
-				return
-			}
+			opType <- op.Op
 		case WriteOp:
-			err = dec.Decode(&buf)
+			err = fromClient.Decode(&buf)
 			if err != nil {
 				fmt.Printf("Decode buf error: %s\n", err)
 				return
 			}
-			err = enc.Encode(reply{WriteReply, op.Size})
+			opType <- op.Op
+		case ExitOp:
+			opType <- op.Op
+			return
+		}
+	}
+}
+
+func serverSend(conn net.Conn, opType chan int, size int) {
+	sending := gob.NewEncoder(conn)
+	buf := make([]byte, size)
+	for {
+		switch <-opType {
+		case ReadOp:
+			err := sending.Encode(reply{ReadReply, size})
 			if err != nil {
-				fmt.Printf("Encode of write reply error: %s\n", err)
+				fmt.Printf("sending encode error of header: %s\n", err)
+				return
+			}
+			err = sending.Encode(&buf)
+			if err != nil {
+				fmt.Printf("sending data error: %s\n", err)
+				return
+			}
+		case WriteOp:
+			err := sending.Encode(reply{WriteReply, size})
+			if err != nil {
+				fmt.Printf("sending encode write error: %s\n", err)
 				return
 			}
 		case ExitOp:
-			enc.Encode(reply{ExitReply, op.Size})
-			return
+			sending.Encode(reply{ExitReply, size})
 		}
 	}
 }
