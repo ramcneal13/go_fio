@@ -107,7 +107,7 @@ func clientReader(conn net.Conn, size int, wg *sync.WaitGroup) {
 	tickCount := 1
 
 	defer func() {
-		fmt.Printf("Average: %s\n", support.Humanize(bw/int64(tickCount), 1))
+		fmt.Printf("\nAverage: %s\n", support.Humanize(bw/int64(tickCount), 1))
 		wg.Done()
 	}()
 
@@ -162,6 +162,7 @@ func runDeamon() {
 
 func serverConn(conn net.Conn) {
 	var op request
+	var wg sync.WaitGroup
 
 	fromClient := gob.NewDecoder(conn)
 	err := fromClient.Decode(&op)
@@ -178,7 +179,12 @@ func serverConn(conn net.Conn) {
 		fmt.Printf("Bad version: Expected %d, Got %d\n", Version, op.Vers)
 		return
 	}
-	go serverSend(conn, opType, op.Size)
+
+	wg.Add(1)
+	go serverSend(conn, opType, op.Size, &wg)
+
+	defer wg.Wait()
+
 	buf := make([]byte, op.Size)
 	for {
 		err := fromClient.Decode(&op)
@@ -207,9 +213,15 @@ func serverConn(conn net.Conn) {
 	}
 }
 
-func serverSend(conn net.Conn, opType chan int, size int) {
+func serverSend(conn net.Conn, opType chan int, size int, wg *sync.WaitGroup) {
 	sending := gob.NewEncoder(conn)
 	buf := make([]byte, size)
+
+	defer func() {
+		sending.Encode(reply{ExitReply, size})
+		wg.Done()
+	}()
+
 	for {
 		switch <-opType {
 		case ReadOp:
@@ -230,7 +242,7 @@ func serverSend(conn net.Conn, opType chan int, size int) {
 				return
 			}
 		case ExitOp:
-			sending.Encode(reply{ExitReply, size})
+			return
 		}
 	}
 }
