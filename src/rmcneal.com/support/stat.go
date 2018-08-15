@@ -93,7 +93,7 @@ func StatsInit(global *JobData, printer *Printer) (*StatsState, error) {
 		return nil, err
 	} else {
 		s.fp = fp
-		fmt.Fprintln(fp, "Time, IOPS, Read B/W, Write B/W")
+		fmt.Fprintln(fp, "# Time, IOPS, Read B/W, Write B/W")
 	}
 
 	go s.StatsWorker()
@@ -119,7 +119,7 @@ func (s *StatsState) StatsWorker() {
 	keepRunning := true
 	timeMarkers := time.Tick(time.Second)
 	recordMarkers := time.Tick(s.gcfg.recordTime)
-	var recordIOPS, recordRead, recordWrite, lastIops int64 = 0, 0, 0, 0
+	var recordIOPS, recordRead, recordWrite, lastIops, lastBW int64 = 0, 0, 0, 0, 0
 	markerSeconds := 0
 
 	for keepRunning {
@@ -199,6 +199,10 @@ func (s *StatsState) StatsWorker() {
 			}
 
 		case t := <-recordMarkers:
+			if s.holdDisplay {
+				break
+			}
+
 			fmt.Fprintf(s.fp, "%02d:%02d:%02d, %d, %d, %d\n",
 				t.Hour(), t.Minute(), t.Second(), s.Iops-recordIOPS,
 				s.ReadBW-recordRead, s.WriteBW-recordWrite)
@@ -215,8 +219,10 @@ func (s *StatsState) StatsWorker() {
 			fmt.Fprintf(&buffer, "[%s]", SecsToHMSstr(markerSeconds))
 			markerSeconds++
 			if s.HistogramSize[0] == 0 {
-				s.printer.Send("%s iops: %6s\r", buffer.String(), Humanize(s.Iops-lastIops, 1))
+				s.printer.Send("%s iops: %6s, BW: %6s\r", buffer.String(), Humanize(s.Iops-lastIops, 1),
+					Humanize((s.ReadBW+s.WriteBW)-lastBW, 1))
 				lastIops = s.Iops
+				lastBW = s.ReadBW + s.WriteBW
 				break
 			}
 			for avail := range s.HistogramSize {
@@ -308,8 +314,8 @@ func (s *StatsState) StatsDump() {
 			Humanize(s.Iops/int64(runTime.Seconds()), 1),
 			runTime,
 			Humanize((s.ReadBW+s.WriteBW)/int64(runTime.Seconds()), 1),
-			Humanize(s.ReadBW / int64(runTime.Seconds()), 1),
-			Humanize(s.WriteBW / int64(runTime.Seconds()), 1))
+			Humanize(s.ReadBW/int64(runTime.Seconds()), 1),
+			Humanize(s.WriteBW/int64(runTime.Seconds()), 1))
 	} else {
 		forceRaw = true
 	}

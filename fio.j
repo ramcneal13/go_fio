@@ -1,4 +1,5 @@
 [global]
+version=1
 directory=/Volumes/Workspaces/fio
 ;record-file=/Users/rmcneal/tmp/fiod/bw_record.csv
 record-time=1s

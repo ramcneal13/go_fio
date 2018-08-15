@@ -11,23 +11,25 @@ import (
 )
 
 const (
-	Rwrand       = "rw"
-	ReadSeq      = "read"
-	ReadRand     = "randread"
-	WriteSeq     = "write"
-	WriteRand    = "randwrite"
-	Rwseq        = "rwseq"
-	PatternZero  = "zero"
-	PatternRand  = "rand"
-	PatternIncr  = "incr"
-	PatternLCG   = "lcg"
-	RwrandVerify = "rwv"
-	None         = "none"
+	Rwrand        = "rw"
+	ReadSeq       = "read"
+	ReadSeqVerify = "readv"
+	ReadRand      = "randread"
+	WriteSeq      = "write"
+	WriteRand     = "randwrite"
+	Rwseq         = "rwseq"
+	PatternZero   = "zero"
+	PatternRand   = "rand"
+	PatternIncr   = "incr"
+	PatternLCG    = "lcg"
+	RwrandVerify  = "rwv"
+	None          = "none"
 )
 const (
 	_           = iota
 	ReadSeqType = iota + 1
 	ReadRandType
+	ReadSeqVerifyType
 	WriteSeqType
 	WriteRandType
 	RwrandType
@@ -102,6 +104,7 @@ func init() {
 	accessType = map[string]int{}
 	accessType[ReadSeq] = ReadSeqType
 	accessType[ReadRand] = ReadRandType
+	accessType[ReadSeqVerify] = ReadSeqVerifyType
 	accessType[WriteSeq] = WriteSeqType
 	accessType[WriteRand] = WriteRandType
 	accessType[Rwrand] = RwrandType
@@ -110,6 +113,7 @@ func init() {
 	accessType[None] = NoneType
 	accessStrMap = map[int]string{}
 	accessStrMap[ReadSeqType] = ReadSeq
+	accessStrMap[ReadSeqVerifyType] = ReadSeqVerify
 	accessStrMap[ReadRandType] = ReadRand
 	accessStrMap[WriteSeqType] = WriteSeq
 	accessStrMap[WriteRandType] = WriteRand
@@ -371,7 +375,7 @@ func (j *JobData) validate(section string) error {
 	}
 	if dur, err := time.ParseDuration(j.Delay_Start); err != nil {
 		//noinspection GoPlaceholderCount
-		return fmt.Errorf("[section %s]/Invalid delay-start value\n")
+		return fmt.Errorf("[section %s]/Invalid delay-start value\n", section)
 	} else {
 		j.delayStart = dur
 	}

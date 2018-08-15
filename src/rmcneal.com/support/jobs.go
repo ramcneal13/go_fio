@@ -1,10 +1,12 @@
 package support
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 	"unsafe"
 )
@@ -70,7 +72,7 @@ func (j *Job) Init(tracker *tracking) error {
 	j.lcgBlk = new(RandLCG)
 	j.lcgBlk.Init()
 	j.threadRun = false
-	j.bailOnError = false
+	j.bailOnError = true
 	if fileinfo, err := j.fp.Stat(); err == nil {
 		if fileinfo.Mode().IsRegular() {
 			if fileinfo.Size() < j.JobParams.fileSize {
@@ -257,22 +259,25 @@ func (j *Job) oneAD() AccessData {
 
 			// Generate the block number for the next request.
 			switch access.opType {
-			case ReadSeqType, WriteSeqType, RwseqType:
+			case ReadSeqType, WriteSeqType, RwseqType, ReadSeqVerifyType:
 				access.lastBlk += access.blkSize
 				if access.lastBlk >= access.sectionEnd {
 					access.lastBlk = access.sectionStart
 				}
 				ad.blk = access.lastBlk
+
 			case ReadRandType, WriteRandType, RwrandType, RwrandVerifyType:
 				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - int64(len(ad.buf))) / 512)
 				ad.blk = randBlk*512 + access.sectionStart
-				access.lastBlk = ad.blk
+
 			case NoneType:
 				ad.blk = 0
+
 			default:
 				fmt.Printf("\nInvalid opType=%d ... should be impossible\n", access.opType)
 				os.Exit(1)
 			}
+
 			// We get a copy of the element stored in the list. So, update the element
 			// with any changes that have been made.
 			e.Value = access
@@ -281,20 +286,27 @@ func (j *Job) oneAD() AccessData {
 			switch access.opType {
 			case ReadRandType, ReadSeqType:
 				ad.op = ReadBaseType
+
+			case ReadSeqVerifyType:
+				ad.op = ReadBaseVerifyType
+
 			case WriteRandType, WriteSeqType:
 				ad.op = WriteBaseType
+
 			case RwseqType, RwrandType:
 				if rand.Intn(100) < access.readPercent {
 					ad.op = ReadBaseType
 				} else {
 					ad.op = WriteBaseType
 				}
+
 			case RwrandVerifyType:
 				if rand.Intn(100) < access.readPercent {
 					ad.op = ReadBaseVerifyType
 				} else {
 					ad.op = WriteBaseVerifyType
 				}
+
 			case NoneType:
 				ad.op = NoneType
 			}
@@ -314,30 +326,41 @@ func (j *Job) fileFill(tracker *tracking) {
 	buf := make([]byte, fillSize)
 	j.patternFill(buf)
 	j.threadRun = true
+
 	for i := 0; i < fillJobs; i++ {
 		go j.ioWorker(i)
 	}
+
 	go func() {
-		for curBlock := int64(0); curBlock < lastBlock; curBlock += fillSize {
+		var curBlock int64
+		for curBlock = int64(0); (curBlock + fillSize) <= lastBlock; curBlock += fillSize {
 			ad := AccessData{op: WriteBaseVerifyType, buf: buf, blk: curBlock}
 			j.nextBlks <- ad
 		}
+
+		// If the device size is not a multiple of our initialization buffer there'll be chunk
+		// at the end which doesn't get initialized, but during the actual run the worker
+		// will access the data. So, create a final write request that accounts for that
+		// last little bit.
+		if (lastBlock - curBlock) > 0 {
+			lastBuf := make([]byte, lastBlock-curBlock)
+			ad := AccessData{op: WriteBaseVerifyType, buf: lastBuf, blk: curBlock}
+			j.nextBlks <- ad
+		}
+
 		for i := 0; i < fillJobs; i++ {
 			ad := AccessData{op: StopType}
 			j.nextBlks <- ad
 		}
+
 	}()
 	ticker := time.Tick(time.Second)
 	for {
 		select {
 		case <-ticker:
-			if _, err := j.fp.Stat(); err != nil {
-				fmt.Printf("Stat(%s) failed; %s\n", err, j.JobParams.Name)
-				return
-			} else {
-				tracker.UpdateName(j.TargetName, fmt.Sprintf("-%.1f",
-					float64(j.Stats.WriteBW)/float64(lastBlock)*100.0))
-			}
+			tracker.UpdateName(j.TargetName, fmt.Sprintf("-%.1f",
+				float64(j.Stats.WriteBW)/float64(lastBlock)*100.0))
+
 		case <-j.thrCompletes:
 			fillJobs--
 			if fillJobs == 0 {
@@ -380,21 +403,36 @@ func (j *Job) Stop() {
 }
 
 const (
-	MARKER_SIG = 0xdeadbeef
+	MarkerSig = 0xdeadbeef00ff1122
 )
 
 type markerBlock struct {
 	blockNumber int64
-	signature   uint32
+	signature   uint64
 	tMarker     time.Time
+	targetName  [64]byte
 }
 
 func (j *Job) validateBuf(buf []byte, blockNum int64) bool {
 	slice := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
 	for offset := 0; offset < len(buf); offset += 512 {
 		marker := (*markerBlock)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
-		if marker.signature != MARKER_SIG {
+		if marker.signature != MarkerSig {
 			fmt.Printf("Invalid signature at block: 0x%x, offset: 0x%x\n", blockNum, offset)
+			return false
+		}
+
+		if marker.blockNumber != blockNum {
+			fmt.Printf("Bad block at block/offset: 0x%x/%x, found 0x%x\n", blockNum, offset, marker.blockNumber)
+			return false
+		}
+		blockNum += 512
+
+		bp := bytes.NewBuffer(marker.targetName[:len(j.TargetName)])
+		if strings.Compare(bp.String(), j.TargetName) != 0 {
+			fmt.Printf("Bad name in block: 0x%x/%x -- Got %s, Found %s\n", blockNum, offset,
+				bp.String(), j.TargetName)
+			fmt.Printf("len(bp)=%d, len(Targetname)=%d\n", len(bp.String()), len(j.TargetName))
 			return false
 		}
 
@@ -404,12 +442,6 @@ func (j *Job) validateBuf(buf []byte, blockNum int64) bool {
 			fmt.Printf("Stale block: 0x%x\n", marker.blockNumber)
 			return false
 		}
-
-		if marker.blockNumber != blockNum {
-			fmt.Printf("Bad block at block/offset: 0x%x/%x, found 0x%x\n", blockNum, offset, marker.blockNumber)
-			return false
-		}
-		blockNum += 512
 	}
 	return true
 }
@@ -421,8 +453,9 @@ func (j *Job) initBuf(buf []byte, blockNum int64) {
 		marker := (*markerBlock)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
 		marker.blockNumber = blockNum
 		blockNum += 512
-		marker.signature = MARKER_SIG
+		marker.signature = MarkerSig
 		marker.tMarker = j.startTime
+		copy(marker.targetName[:], j.TargetName)
 	}
 }
 
@@ -446,7 +479,7 @@ func (j *Job) ioWorker(workId int) {
 			if _, err := j.fp.ReadAt(buf, ad.blk); err != nil {
 				rpt.ReadErrors++
 				if j.bailOnError {
-					fmt.Printf("ReadAt error(0x%x:0x%x)\n  : %s\n", ad.blk, len(ad.buf), err)
+					fmt.Printf("ReadAt error(0x%x:0x%x) : %s\n", ad.blk, len(ad.buf), err)
 					j.threadRun = false
 					break
 				} else {

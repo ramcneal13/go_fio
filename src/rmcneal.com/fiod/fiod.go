@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"rmcneal.com/support"
@@ -12,8 +11,6 @@ import (
 )
 
 var inputFile string
-var pprofFile string
-var runNetwork bool
 
 func init() {
 	const (
@@ -24,9 +21,6 @@ func init() {
 	)
 	flag.StringVar(&inputFile, "jobs_file", defaultFile, usage)
 	flag.StringVar(&inputFile, "j", defaultFile, usage+" (shorthand)")
-	flag.StringVar(&pprofFile, "pprof", defaultPprofFile, usagePprof)
-	flag.StringVar(&pprofFile, "p", defaultPprofFile, usagePprof+" (shorthand)")
-	flag.BoolVar(&runNetwork, "n", false, "Start network control")
 }
 
 func main() {
@@ -68,25 +62,6 @@ func main() {
 	if err != nil {
 		printer.Send("Failure to start stat engine: %s\n", err)
 		return
-	}
-
-	if pprofFile != "" {
-		if pperfFp, err = os.OpenFile(pprofFile, os.O_CREATE|os.O_RDWR, 0666); err == nil {
-			if err = pprof.StartCPUProfile(pperfFp); err != nil {
-				printer.Send("StartCPUProfile failed: %s\n", err)
-			}
-		} else {
-			printer.Send("Didn't start profiling\n")
-		}
-	}
-
-	if runNetwork {
-		if n, err := support.NetInit(); err != nil {
-			fmt.Printf("Couldn't start network\n")
-			return
-		} else {
-			n.Finish()
-		}
 	}
 
 	if cfg.Global.Verbose {
