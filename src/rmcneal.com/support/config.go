@@ -250,7 +250,7 @@ func (j *JobData) parseAccessPattern() error {
 				}
 				e.readPercent, _ = strconv.Atoi(rwPercentage[1])
 			}
-			if e.blkSize, ok = blkStringToInt64(params[2]); !ok {
+			if e.blkSize, ok = BlkStringToInt64(params[2]); !ok {
 				return fmt.Errorf("invalid blksize: %s", params[2])
 			}
 			l.PushBack(e)
@@ -267,33 +267,6 @@ func (j *JobData) parseAccessPattern() error {
 	}
 	j.accessPattern = l
 	return nil
-}
-
-func blkStringToInt64(s string) (int64, bool) {
-	var size int64
-
-	if idx := strings.IndexAny(s, "kmgtKMGT"); idx != -1 {
-		val, err := strconv.ParseInt(s[:idx], 10, 64)
-		if err != nil {
-			return 0, false
-		}
-		switch s[idx : idx+1] {
-		case "k", "K":
-			size = val * 1024
-		case "m", "M":
-			size = val * 1024 * 1024
-		case "g", "G":
-			size = val * 1024 * 1024 * 1024
-		case "t", "T":
-			size = val * 1024 * 1024 * 1024 * 1024
-		}
-	} else {
-		var err error
-		if size, err = strconv.ParseInt(s, 10, 64); err != nil {
-			return 0, false
-		}
-	}
-	return size, true
 }
 
 func (j *JobData) validate(section string) error {
@@ -330,7 +303,7 @@ func (j *JobData) validate(section string) error {
 	}
 	var ok bool
 
-	if j.fileSize, ok = blkStringToInt64(j.Size); !ok {
+	if j.fileSize, ok = BlkStringToInt64(j.Size); !ok {
 		return fmt.Errorf("[second %s]/file-size: %s", section, j.Size)
 	}
 

@@ -14,27 +14,46 @@ import (
 
 var asDeamon bool
 var clientHost string
-var requestSize int
-var runTime int
+var requestSizeStr string
+var runTimeStr string
 var readPercent int
+var iodepthMax int
 
 func init() {
 	flag.BoolVar(&asDeamon, "d", false, "start as daemon")
 	flag.StringVar(&clientHost, "h", "", "client host to contact")
-	flag.IntVar(&requestSize, "s", 1024, "Request size")
-	flag.IntVar(&runTime, "t", 60, "Run time")
+	flag.StringVar(&requestSizeStr, "s", "1k", "Request size")
+	flag.StringVar(&runTimeStr, "t", "1m", "Run time")
 	flag.IntVar(&readPercent, "r", 50, "Read percentage")
+	flag.IntVar(&iodepthMax, "D", 0, "number of outstanding requests")
 }
 
+var runTime time.Duration
+var requestSize int64
+
 func main() {
+	var err error
+	var ok bool
 	flag.Parse()
+
+	if runTime, err = time.ParseDuration(runTimeStr); err != nil {
+		fmt.Printf("Invalid run time: %s, error is %s\n", runTimeStr, err)
+		os.Exit(1)
+	}
+	if requestSize, ok = support.BlkStringToInt64(requestSizeStr); !ok {
+		fmt.Printf("Failed to parse size request of %s\n", requestSizeStr)
+		os.Exit(1)
+	}
 
 	if asDeamon {
 		runDeamon()
 	} else if clientHost == "" {
 		fmt.Printf("Must have -h or -d minimum\n")
+		flag.PrintDefaults()
 		os.Exit(1)
 	} else {
+		fmt.Printf("Size: %s, Run Time: %s, iodepth: %d\n", support.Humanize(requestSize, 1),
+			runTime, iodepthMax)
 		clientOp()
 	}
 }
@@ -47,23 +66,24 @@ const (
 	ReadReply  = 5
 	WriteReply = 6
 	ExitReply  = 7
-	Version    = 0x13
+	Version    = 0x15
 )
 
 type request struct {
 	Op   int
-	Size int
+	Size int64
 	Vers int
 }
 type reply struct {
 	Op   int
-	Size int
+	Size int64
 }
 
 func clientOp() {
 	var wg sync.WaitGroup
 	buf := make([]byte, requestSize)
-	timeBomb := time.After(time.Duration(runTime) * time.Second)
+	timeBomb := time.After(runTime)
+	iodepth := make(chan int, 100)
 
 	conn, err := net.Dial("tcp", clientHost+":3600")
 	if err != nil {
@@ -82,42 +102,80 @@ func clientOp() {
 		wg.Wait()
 	}()
 
-	go clientReader(conn, requestSize, &wg)
-	for {
-		select {
-		case <-timeBomb:
-			return
-		default:
-			if rand.Intn(100) > readPercent {
-				enc.Encode(request{WriteOp, requestSize, Version})
-				enc.Encode(&buf)
-			} else {
-				enc.Encode(request{ReadOp, requestSize, Version})
+	for i := 0; i < iodepthMax; i++ {
+		iodepth <- 1
+	}
+	go clientReader(conn, requestSize, &wg, iodepth)
+	if iodepthMax == 0 {
+		for {
+			select {
+			case <-timeBomb:
+				return
+			default:
+				if rand.Intn(100) > readPercent {
+					enc.Encode(request{WriteOp, requestSize, Version})
+					enc.Encode(&buf)
+				} else {
+					enc.Encode(request{ReadOp, requestSize, Version})
+				}
+			}
+		}
+	} else {
+		for {
+			select {
+			case <-timeBomb:
+				return
+			case <-iodepth:
+				if rand.Intn(100) > readPercent {
+					enc.Encode(request{WriteOp, requestSize, Version})
+					enc.Encode(&buf)
+				} else {
+					enc.Encode(request{ReadOp, requestSize, Version})
+				}
 			}
 		}
 	}
 }
 
-func clientReader(conn net.Conn, size int, wg *sync.WaitGroup) {
-	var lastVal, bw int64 = 0, 0
+func clientReader(conn net.Conn, size int64, wg *sync.WaitGroup, iodepth chan int) {
+	var lastVal, bw, lowBW, highBW int64 = 0, 0, 0, 0
 	var reply reply
 	buf := make([]byte, size)
 	dec := gob.NewDecoder(conn)
 	tick := time.Tick(time.Second)
 	tickCount := 1
+	var useNewLine bool
 
 	defer func() {
-		fmt.Printf("\nAverage: %s\n", support.Humanize(bw/int64(tickCount), 1))
+		fmt.Printf("\nAverage: %s -- Range: %s to %s\n", support.Humanize(bw/int64(tickCount), 1),
+			support.Humanize(lowBW, 1), support.Humanize(highBW, 1))
 		wg.Done()
 	}()
+
+	stdinStat, _ := os.Stdout.Stat()
+	if stdinStat.Mode().IsRegular() {
+		useNewLine = true
+	} else {
+		useNewLine = false
+	}
 
 	for {
 		select {
 		case <-tick:
 			currentVal := bw - lastVal
 			lastVal = bw
+			if currentVal > highBW {
+				highBW = currentVal
+			}
+			if lowBW == 0 || currentVal < lowBW {
+				lowBW = currentVal
+			}
 			tickCount += 1
-			fmt.Printf("%s: %s\r", support.SecsToHMSstr(tickCount), support.Humanize(currentVal, 1))
+			if useNewLine {
+				fmt.Printf("%s: %s\n", support.SecsToHMSstr(tickCount), support.Humanize(currentVal, 1))
+			} else {
+				fmt.Printf("%s: %s\r", support.SecsToHMSstr(tickCount), support.Humanize(currentVal, 1))
+			}
 
 		default:
 			err := dec.Decode(&reply)
@@ -127,6 +185,9 @@ func clientReader(conn net.Conn, size int, wg *sync.WaitGroup) {
 			}
 			switch reply.Op {
 			case ReadReply:
+				if iodepthMax != 0 {
+					iodepth <- 1
+				}
 				err = dec.Decode(&buf)
 				if err != nil {
 					fmt.Printf("Reply error on read data: %s\n", err)
@@ -134,6 +195,9 @@ func clientReader(conn net.Conn, size int, wg *sync.WaitGroup) {
 				}
 				bw += int64(reply.Size)
 			case WriteReply:
+				if iodepthMax != 0 {
+					iodepth <- 1
+				}
 				bw += int64(reply.Size)
 
 			case ExitReply:
@@ -165,6 +229,7 @@ func serverConn(conn net.Conn) {
 	var wg sync.WaitGroup
 
 	fromClient := gob.NewDecoder(conn)
+	errorEnc := gob.NewEncoder(conn)
 	err := fromClient.Decode(&op)
 	opType := make(chan int, 100)
 	if err != nil {
@@ -174,9 +239,11 @@ func serverConn(conn net.Conn) {
 
 	if op.Op != InitialOp {
 		fmt.Print("App protocol error. First packet not an InitialOp\n")
+		errorEnc.Encode(reply{ExitReply, 0})
 		return
 	} else if op.Vers != Version {
-		fmt.Printf("Bad version: Expected %d, Got %d\n", Version, op.Vers)
+		fmt.Printf("App protocol error. Version mismatch. Got %d, Expected %d\n", op.Vers, Version)
+		errorEnc.Encode(reply{ExitReply, 0})
 		return
 	}
 
@@ -213,7 +280,7 @@ func serverConn(conn net.Conn) {
 	}
 }
 
-func serverSend(conn net.Conn, opType chan int, size int, wg *sync.WaitGroup) {
+func serverSend(conn net.Conn, opType chan int, size int64, wg *sync.WaitGroup) {
 	sending := gob.NewEncoder(conn)
 	buf := make([]byte, size)
 

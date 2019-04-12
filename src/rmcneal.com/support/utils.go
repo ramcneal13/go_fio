@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -39,6 +40,33 @@ func SecsToHMSstr(seconds int) string {
 	m := seconds / 60 % 60
 	s := seconds % 60
 	return fmt.Sprintf("%02dh%02dm%02ds", h, m, s)
+}
+
+func BlkStringToInt64(s string) (int64, bool) {
+	var size int64
+
+	if idx := strings.IndexAny(s, "kmgtKMGT"); idx != -1 {
+		val, err := strconv.ParseInt(s[:idx], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		switch s[idx : idx+1] {
+		case "k", "K":
+			size = val * 1024
+		case "m", "M":
+			size = val * 1024 * 1024
+		case "g", "G":
+			size = val * 1024 * 1024 * 1024
+		case "t", "T":
+			size = val * 1024 * 1024 * 1024 * 1024
+		}
+	} else {
+		var err error
+		if size, err = strconv.ParseInt(s, 10, 64); err != nil {
+			return 0, false
+		}
+	}
+	return size, true
 }
 
 var debugOn = false

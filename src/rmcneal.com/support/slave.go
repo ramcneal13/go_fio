@@ -35,7 +35,7 @@ type SlaveController struct {
 	encode    *json.Encoder
 	decode    *json.Decoder
 	Stats     WorkerStat
-	StatChan	chan WorkerStat
+	StatChan  chan WorkerStat
 }
 
 type SlaveState struct {
@@ -322,7 +322,7 @@ func (s *SlaveState) parseAccessPattern() error {
 				}
 				e.readPercent, _ = strconv.Atoi(rwPercentage[1])
 			}
-			if e.blkSize, ok = blkStringToInt64(params[2]); !ok {
+			if e.blkSize, ok = BlkStringToInt64(params[2]); !ok {
 				return fmt.Errorf("invalid blksize: %s", params[2])
 			}
 			l.PushBack(e)
@@ -407,7 +407,7 @@ func (s *SlaveState) intermediateStats() {
 	checkin := 0
 	for {
 		select {
-		case ws := <- s.statChan:
+		case ws := <-s.statChan:
 			s.addStats(thrStats, ws)
 			checkin++
 			if checkin < s.params.IODepth {
