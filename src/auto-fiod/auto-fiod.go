@@ -18,6 +18,7 @@ func init() {
 	flag.StringVar(&inputFile, "c", defaultFile, usage+" (shorthand)")
 }
 
+//noinspection GoSnakeCaseUsage
 type OptionsData struct {
 	Access_Pattern string
 	Directory      string
@@ -58,7 +59,7 @@ func main() {
 	for i := 0; i < cfg.Config.Num_Files; i++ {
 		_, _ = fmt.Fprintf(of, "\n[job \"j%d\"]\nname=file-%d\nsize=%s\n", i, i, cfg.Config.Size)
 	}
-	of.Close()
+	_ = of.Close()
 }
 
 func readConfig(f string) (*Config, error) {
