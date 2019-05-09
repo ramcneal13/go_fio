@@ -1,6 +1,9 @@
 package support
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 import "os"
 
 type threadStatus struct {
@@ -52,7 +55,6 @@ func (t *tracking) SetVerbose() {
 func (t *tracking) UpdateName(name string, extra string) {
 	ti := t.nodes[name]
 	ti.extraTag = extra
-	t.displayTrack()
 }
 
 func (t *tracking) WaitForThreads() {
@@ -61,11 +63,16 @@ func (t *tracking) WaitForThreads() {
 	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
 		cols = int(win.Width)
 	}
+	tSec := time.Tick(time.Second)
 	for t.count > 0 {
-		status := <-t.completeChan
-		t.removeNode(status.name)
-		if t.verbose == false {
-			t.printer.Send("%*s\r%s ... %d\r", cols, "", t.title, t.count)
+		select {
+		case status := <-t.completeChan:
+			t.removeNode(status.name)
+			if t.verbose == false {
+				t.printer.Send("%*s\r%s ... %d\r", cols, "", t.title, t.count)
+			}
+		case <-tSec:
+			t.displayTrack()
 		}
 	}
 	t.printer.Send("\n")
@@ -79,7 +86,7 @@ func (t *tracking) displayTrack() {
 	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
 		cols = int(win.Width)
 	}
-	t.printer.Send("%*s\r", cols, "")
+	t.printer.Send("%*s\r", cols-1, "")
 	title := fmt.Sprintf("%s: ", t.title)
 	cols -= len(title)
 	t.printer.Send(title)

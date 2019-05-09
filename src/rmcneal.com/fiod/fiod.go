@@ -167,16 +167,15 @@ func main() {
 		printer.Send("\n")
 		dumpHoldStats(stats)
 
-		printer.Send("Clean up ... ")
+		track.SetTitle("Clean up ... ")
 		for _, name := range barrierGroups {
-			if job, ok := jobs[name]; ok {
-				if showStart {
-					printer.Send("[%s] ", job.GetName())
-				}
+			job := jobs[name]
+			track.RunFunc(name, func() bool {
 				job.Fini()
-			}
+				return true
+			})
 		}
-		printer.Send("\n")
+		track.WaitForThreads()
 	}
 	exitCode = 0
 }

@@ -371,11 +371,14 @@ func (j *Job) fileFill(tracker *tracking) {
 	}
 
 	ticker := time.Tick(time.Second)
+
 	for {
 		select {
 		case <-ticker:
-			tracker.UpdateName(j.TargetName, fmt.Sprintf("-%.1f",
-				float64(j.Stats.WriteBW)/float64(lastBlock)*100.0))
+			fi, _ := j.fp.Stat()
+
+			tracker.UpdateName(j.TargetName, fmt.Sprintf(":%.1f",
+				float64(fi.Size())/float64(j.JobParams.fileSize)*100.0))
 
 		case <-j.thrCompletes:
 			fillJobs--
