@@ -133,6 +133,7 @@ func (j *Job) FillAsNeeded(tracker *tracking) error {
 			j.JobParams.fileSize = fileinfo.Size()
 			j.JobParams.Size = Humanize(j.JobParams.fileSize, 1)
 			if j.JobParams.fileSize == 0 {
+				j.validInit = false
 				return fmt.Errorf("must set file size or use a preexisting file")
 			}
 		}
