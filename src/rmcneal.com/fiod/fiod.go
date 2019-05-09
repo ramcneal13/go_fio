@@ -14,10 +14,8 @@ var inputFile string
 
 func init() {
 	const (
-		defaultFile      = "fio.j"
-		usage            = "File containing job instructions"
-		defaultPprofFile = ""
-		usagePprof       = "File with utilization info"
+		defaultFile = "fio.j"
+		usage       = "File containing job instructions"
 	)
 	flag.StringVar(&inputFile, "jobs_file", defaultFile, usage)
 	flag.StringVar(&inputFile, "j", defaultFile, usage+" (shorthand)")
@@ -82,29 +80,37 @@ func main() {
 	for _, barrierGroups := range *cfg.GetBarrierOrder() {
 		jobsStarted := 0
 		track.SetTitle("Preparing")
+		if len(barrierGroups) < 5 {
+			track.SetVerbose()
+		}
 		for _, name := range barrierGroups {
 			if jd, ok := cfg.Job[name]; !ok {
 				printer.Send("\nBad name in job list -- '%s'\n", name)
 			} else {
 				job := &support.Job{TargetName: name, JobParams: jd, Stats: stats}
 				jobs[name] = job
-
-				track.RunFunc(name, func() bool {
-					if err := job.Init(track); err == nil {
-						return true
-					} else {
-						printer.Send("[%s] %s\n", job.GetName(), err)
-						return false
-					}
-				})
+				if err := job.Init(); err != nil {
+					printer.Send("[%s] %s\n", job.GetName(), err)
+					return
+				}
+				if cfg.Global.Verbose {
+					printer.Send("---- [%s] ----\n", name)
+					support.DisplayInterface(cfg.Job[name], printer)
+				}
 			}
+		}
+		for _, name := range barrierGroups {
+			job := jobs[name]
+			track.RunFunc(name, func() bool {
+				if err := job.FillAsNeeded(track); err == nil {
+					return true
+				} else {
+					printer.Send("[%s] %s\n", job.GetName(), err)
+					return false
+				}
+			})
 		}
 		track.WaitForThreads()
-		if cfg.Global.Verbose {
-			for _, name := range barrierGroups {
-				support.DisplayInterface(cfg.Job[name], printer)
-			}
-		}
 
 		printer.Send("Starting ... ")
 		// Clear out the stats just before starting the jobs. The timer is running
@@ -112,9 +118,15 @@ func main() {
 		// would be counted against the elapsed time for these threads if we don't
 		// clear the stats now.
 		stats.Send(support.StatsRecord{OpType: support.StatClear})
+		showStart := false
+		if len(barrierGroups) < 5 {
+			showStart = true
+		}
 		for _, name := range barrierGroups {
 			if job, ok := jobs[name]; ok {
-				printer.Send("[%s] ", name)
+				if showStart {
+					printer.Send("[%s] ", name)
+				}
 				go job.Start(jobExits)
 				jobsStarted++
 			} else {
@@ -158,7 +170,9 @@ func main() {
 		printer.Send("Clean up ... ")
 		for _, name := range barrierGroups {
 			if job, ok := jobs[name]; ok {
-				printer.Send("[%s] ", job.GetName())
+				if showStart {
+					printer.Send("[%s] ", job.GetName())
+				}
 				job.Fini()
 			}
 		}

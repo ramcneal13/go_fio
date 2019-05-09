@@ -19,6 +19,7 @@ type tracking struct {
 	printer      *Printer
 	count        int
 	completeChan chan threadStatus
+	verbose      bool
 }
 
 func TrackingInit(printer *Printer) *tracking {
@@ -44,6 +45,10 @@ func (t *tracking) SetTitle(title string) {
 	t.title = title
 }
 
+func (t *tracking) SetVerbose() {
+	t.verbose = true
+}
+
 func (t *tracking) UpdateName(name string, extra string) {
 	ti := t.nodes[name]
 	ti.extraTag = extra
@@ -51,15 +56,26 @@ func (t *tracking) UpdateName(name string, extra string) {
 }
 
 func (t *tracking) WaitForThreads() {
+	var cols = 80
+
+	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
+		cols = int(win.Width)
+	}
 	for t.count > 0 {
 		status := <-t.completeChan
 		t.removeNode(status.name)
+		if t.verbose == false {
+			t.printer.Send("%*s\r%s ... %d\r", cols, "", t.title, t.count)
+		}
 	}
 	t.printer.Send("\n")
 }
 
 func (t *tracking) displayTrack() {
 	var cols = 80
+	if t.verbose == false {
+		return
+	}
 	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
 		cols = int(win.Width)
 	}

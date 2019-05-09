@@ -4,7 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"gopkg.in/gcfg.v1"
+	"math/rand"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 var inputFile string
@@ -22,12 +26,14 @@ func init() {
 type OptionsData struct {
 	Access_Pattern string
 	Directory      string
-	Num_Files      int
+	Num_Files      string
 	Runtime        string
 	Verbose        bool
 	Config_File    string
 	Size           string
-	Iodepth        int
+	Iodepth        string
+
+	rn *rand.Rand
 }
 
 type Config struct {
@@ -51,14 +57,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, _ = fmt.Fprintf(of, "[global]\nversion=1\nruntime=%s\ndirectory=%s\naccess-pattern=%s\niodepth=%d\n",
-		cfg.Config.Runtime, cfg.Config.Directory, cfg.Config.Access_Pattern, cfg.Config.Iodepth)
+	iodepth := cfg.Config.selectIODepth()
+	_, _ = fmt.Fprintf(of, "[global]\nversion=1\ndirectory=%s\naccess-pattern=%s\niodepth=%d\n",
+		cfg.Config.Directory, cfg.Config.Access_Pattern, iodepth)
 	if cfg.Config.Verbose {
 		_, _ = fmt.Fprintf(of, "verbose\n")
 	}
-	for i := 0; i < cfg.Config.Num_Files; i++ {
-		_, _ = fmt.Fprintf(of, "\n[job \"j%d\"]\nname=file-%d\nsize=%s\n", i, i, cfg.Config.Size)
+
+	max := cfg.Config.selectNumFiles()
+	if max*iodepth >= 1000 {
+		fmt.Printf("num-files * iodepth can't exceed 1,000. Thread limit")
+		os.Exit(1)
 	}
+
+	for i := 0; i < max; i++ {
+		_, _ = fmt.Fprintf(of, "\n[job \"j%d\"]\nname=file-%d\nsize=%s\nruntime=%s\n", i, i,
+			cfg.Config.selectSize(), cfg.Config.selectRuntime())
+	}
+
 	_ = of.Close()
 }
 
@@ -73,7 +89,70 @@ func readConfig(f string) (*Config, error) {
 		return nil, err
 	}
 
+	cfg.Config.rn = rand.New(rand.NewSource(time.Now().UnixNano()))
 	return cfg, nil
+}
+
+//
+// Case #1
+// start-end:optional
+// Randomly selects value between start and end, converts said value to a string, and adds
+// "optional" character(s) to return string
+//
+// Case #2
+// 1, 3, 5, 7, 11
+// List of values or strings separated by commas. One of which is randomly selected.
+//
+// Case #3
+// Fall through from the first and it's just a single item which is returned
+//
+func (o *OptionsData) selectFromRange(s string) string {
+	r := strings.Split(s, "-")
+
+	if len(r) != 1 {
+		var opt string
+		var end int
+		var val int
+		if len(r) != 2 {
+			fmt.Printf("Invalid range of %s, should be start-end:optional\n", s)
+			return ""
+		}
+		start, _ := strconv.Atoi(r[0])
+		eStr := strings.Split(r[1], ":")
+		end, _ = strconv.Atoi(eStr[0])
+		if len(eStr) == 1 {
+			opt = ""
+		} else {
+			opt = eStr[1]
+		}
+		val = int(o.rn.Int31n(int32(end)-int32(start))) + start
+		return fmt.Sprintf("%d%s", val, opt)
+	} else {
+		r = strings.Split(s, ",")
+		if len(r) == 1 {
+			return s
+		}
+		idx := o.rn.Int31n(int32(len(r)))
+		return r[idx]
+	}
+}
+
+func (o *OptionsData) selectNumFiles() int {
+	v, _ := strconv.Atoi(o.selectFromRange(o.Num_Files))
+	return v
+}
+
+func (o *OptionsData) selectSize() string {
+	return o.selectFromRange(o.Size)
+}
+
+func (o *OptionsData) selectRuntime() string {
+	return o.selectFromRange(o.Runtime)
+}
+
+func (o *OptionsData) selectIODepth() int {
+	v, _ := strconv.Atoi(o.selectFromRange(o.Iodepth))
+	return v
 }
 
 func (o *OptionsData) validate() error {
@@ -84,8 +163,8 @@ func (o *OptionsData) validate() error {
 	if o.Access_Pattern == "" {
 		o.Access_Pattern = "100:rw:8k"
 	}
-	if o.Num_Files == 0 {
-		o.Num_Files = 10
+	if o.Num_Files == "" {
+		o.Num_Files = "10"
 	}
 	if o.Runtime == "" {
 		o.Runtime = "10m"
@@ -96,8 +175,8 @@ func (o *OptionsData) validate() error {
 	if o.Size == "" {
 		o.Size = "100m"
 	}
-	if o.Iodepth == 0 {
-		o.Iodepth = 1
+	if o.Iodepth == "" {
+		o.Iodepth = "1"
 	}
 
 	return nil

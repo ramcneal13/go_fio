@@ -45,7 +45,7 @@ type Job struct {
 	startTime    time.Time
 }
 
-func (j *Job) Init(tracker *tracking) error {
+func (j *Job) Init() error {
 	jd := j.JobParams
 	j.validInit = false
 	openFlags := os.O_RDWR
@@ -75,16 +75,9 @@ func (j *Job) Init(tracker *tracking) error {
 	j.bailOnError = true
 	if fileinfo, err := j.fp.Stat(); err == nil {
 		if fileinfo.Mode().IsRegular() {
-			if fileinfo.Size() < j.JobParams.fileSize {
-				j.fileFill(tracker)
-				j.fp.Seek(0, 0)
-				j.fp.Sync()
-			} else if j.JobParams.fileSize == 0 {
+			if j.JobParams.fileSize == 0 {
 				j.JobParams.fileSize = fileinfo.Size()
 				j.JobParams.Size = Humanize(j.JobParams.fileSize, 1)
-			}
-			if j.JobParams.fileSize == 0 {
-				return fmt.Errorf("must set file size or use preexisting file")
 			}
 		} else {
 			if pos, err := j.fp.Seek(0, 2); err != nil {
@@ -101,14 +94,6 @@ func (j *Job) Init(tracker *tracking) error {
 			}
 			j.JobParams.Size = Humanize(j.JobParams.fileSize, 1)
 
-			// This should really only be done if the configuration is going to request
-			// some veriant of a verify operation which will need the data pattern
-			// correctly laid out on the device.
-			if j.JobParams.Force_Fill {
-				j.fileFill(tracker)
-			}
-
-			j.fp.Seek(0, 0)
 		}
 	} else {
 		return err
@@ -132,6 +117,35 @@ func (j *Job) Init(tracker *tracking) error {
 	}
 
 	j.validInit = true
+	return nil
+}
+
+func (j *Job) FillAsNeeded(tracker *tracking) error {
+	if fileinfo, err := j.fp.Stat(); err == nil {
+		if fileinfo.Mode().IsRegular() {
+			if fileinfo.Size() < j.JobParams.fileSize {
+				j.fileFill(tracker)
+				_, _ = j.fp.Seek(0, 0)
+				_ = j.fp.Sync()
+				// Reload the stat structure after filling the file
+				fileinfo, _ = j.fp.Stat()
+			}
+			j.JobParams.fileSize = fileinfo.Size()
+			j.JobParams.Size = Humanize(j.JobParams.fileSize, 1)
+			if j.JobParams.fileSize == 0 {
+				return fmt.Errorf("must set file size or use a preexisting file")
+			}
+		}
+	} else {
+		// This should really only be done if the configuration is going to request
+		// some veriant of a verify operation which will need the data pattern
+		// correctly laid out on the device.
+		if j.JobParams.Force_Fill {
+			j.fileFill(tracker)
+		}
+
+		_, _ = j.fp.Seek(0, 0)
+	}
 	return nil
 }
 
@@ -320,16 +334,12 @@ func (j *Job) oneAD() AccessData {
 
 func (j *Job) fileFill(tracker *tracking) {
 	j.JobParams.Force_Fill = true
-	fillJobs := 16
+	fillJobs := j.JobParams.IODepth
 	lastBlock := j.JobParams.fileSize
 	fillSize := int64(1024 * 1024)
 	buf := make([]byte, fillSize)
 	j.patternFill(buf)
 	j.threadRun = true
-
-	for i := 0; i < fillJobs; i++ {
-		go j.ioWorker(i)
-	}
 
 	go func() {
 		var curBlock int64
@@ -354,6 +364,11 @@ func (j *Job) fileFill(tracker *tracking) {
 		}
 
 	}()
+
+	for i := 0; i < fillJobs; i++ {
+		go j.ioWorker(i)
+	}
+
 	ticker := time.Tick(time.Second)
 	for {
 		select {

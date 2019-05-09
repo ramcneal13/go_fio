@@ -69,6 +69,10 @@ type StatsState struct {
 	HistoNextAvail int
 }
 
+func (s *StatsState) Send(record StatsRecord) {
+	s.incoming <- record
+}
+
 func StatsInit(global *JobData, printer *Printer) (*StatsState, error) {
 	s := &StatsState{}
 	s.incoming = make(chan StatsRecord, 10000)
@@ -93,7 +97,7 @@ func StatsInit(global *JobData, printer *Printer) (*StatsState, error) {
 		return nil, err
 	} else {
 		s.fp = fp
-		fmt.Fprintln(fp, "# Time, IOPS, Read B/W, Write B/W")
+		_, _ = fmt.Fprintln(fp, "# Time, IOPS, Read B/W, Write B/W")
 	}
 
 	go s.StatsWorker()
@@ -109,10 +113,6 @@ func (s *StatsState) NextHistogramIdx() int {
 func (s *StatsState) Flush() string {
 	s.Send(StatsRecord{OpType: StatFlush})
 	return <-s.statusChans
-}
-
-func (s *StatsState) Send(rec StatsRecord) {
-	s.incoming <- rec
 }
 
 func (s *StatsState) StatsWorker() {
@@ -173,7 +173,7 @@ func (s *StatsState) StatsWorker() {
 				s.StartTime = time.Now()
 				s.SampleSpeed = map[int]int64{}
 				s.runtime = s.gcfg.runtime
-				fmt.Fprintln(s.fp, "# ---- Barrier request ----")
+				_, _ = fmt.Fprintln(s.fp, "# ---- Barrier request ----")
 				recordIOPS, recordRead, recordWrite, lastIops = 0, 0, 0, 0
 				markerSeconds = 0
 			case StatSetHistogram:
@@ -211,7 +211,7 @@ func (s *StatsState) StatsWorker() {
 				break
 			}
 
-			fmt.Fprintf(s.fp, "%02d:%02d:%02d, %d, %d, %d\n",
+			_, _ = fmt.Fprintf(s.fp, "%02d:%02d:%02d, %d, %d, %d\n",
 				t.Hour(), t.Minute(), t.Second(), s.Iops-recordIOPS,
 				s.ReadBW-recordRead, s.WriteBW-recordWrite)
 			recordIOPS = s.Iops
@@ -224,7 +224,7 @@ func (s *StatsState) StatsWorker() {
 			if s.holdDisplay {
 				break
 			}
-			fmt.Fprintf(&buffer, "[%s]", SecsToHMSstr(markerSeconds))
+			_, _ = fmt.Fprintf(&buffer, "[%s]", SecsToHMSstr(markerSeconds))
 			markerSeconds++
 			if s.HistogramSize[0] == 0 {
 				s.printer.Send("%s iops: %6s, BW: %6s\r", buffer.String(), Humanize(s.Iops-lastIops, 1),
@@ -236,12 +236,12 @@ func (s *StatsState) StatsWorker() {
 			for avail := range s.HistogramSize {
 				if s.HistogramSize[avail] != 0 {
 					for idx, v := range s.HistoBitmap[avail] {
-						fmt.Fprintf(&buffer, "%c", v)
+						_, _ = fmt.Fprintf(&buffer, "%c", v)
 						s.HistoBitmap[avail][idx] = ' '
 					}
 					s.printer.Send("%s\n", buffer.String())
 					buffer.Reset()
-					fmt.Fprintf(&buffer, "%*s", 11, "")
+					_, _ = fmt.Fprintf(&buffer, "%*s", 11, "")
 				}
 			}
 		}
