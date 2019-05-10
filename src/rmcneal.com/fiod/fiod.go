@@ -67,18 +67,16 @@ func main() {
 				titleCol = v
 			}
 		}
-		printer.Send("%*s: %d\n", titleCol, "GOMAXPROCS", runtime.GOMAXPROCS(-1))
-		printer.Send("%*s: %d\n", titleCol, "version", cfg.Global.Version)
-		printer.Send("%*s: %s\n", titleCol, "intermediate-stats", cfg.Global.Intermediate_Stats)
-		printer.Send("%*s: %s\n", titleCol, "job-order", cfg.Global.Job_Order)
+		printer.Send("%*s: %d\n%*s: %d\n%*s: %s\n%*s: %s\n",
+			titleCol, "GOMAXPROCS", runtime.GOMAXPROCS(-1),
+			titleCol, "version", cfg.Global.Version,
+			titleCol, "intermediate-stats", cfg.Global.Intermediate_Stats,
+			titleCol, "job-order", cfg.Global.Job_Order)
 	}
 
-	track := support.TrackingInit(printer, stats)
+	track := support.TrackingInit(printer)
 	for _, perBarrier := range *cfg.GetBarrierOrder() {
-		track.SetTitle("Preparing")
-		if len(perBarrier) < 5 {
-			track.VerboseSet()
-		}
+
 		for _, name := range perBarrier {
 			if jd, ok := cfg.Job[name]; !ok {
 				printer.Send("\nBad name in job list -- '%s'\n", name)
@@ -95,21 +93,38 @@ func main() {
 				}
 			}
 		}
+
+		track.SetTitle("Preparing")
+		if len(perBarrier) < 5 {
+			track.DisplayExtra()
+		} else {
+			track.DisplayCount()
+		}
+
 		for _, name := range perBarrier {
 			job := jobs[name]
 			track.RunFunc(name, func() bool {
 				if err := job.FillAsNeeded(track); err == nil {
 					return true
 				} else {
-					printer.Send("[%s] %s\n", job.GetName(), err)
+					printer.Send("\nERROR: [%s] %s\n", job.GetName(), err)
 					return false
 				}
 			}, func() { job.Stop() })
 		}
 		track.WaitForThreads()
+		track.DisplayReset()
 
-		track.SetTitle("Run ... ")
-		track.StatsEnable()
+		// Clear out the stats just before starting the jobs. The timer is running
+		// in the stats thread which means the time spent during the prepare phase
+		// would be counted against the elapsed time for these threads if we don't
+		// clear the stats now.
+		stats.Send(support.StatsRecord{OpType: support.StatClear})
+		stats.Send(support.StatsRecord{OpType: support.StatRelDisplay})
+
+		track.SetTitle("Run")
+		track.DisplaySet(func() { printer.Send(stats.String()) })
+
 		for _, name := range perBarrier {
 			job := jobs[name]
 			track.RunFunc(name, func() bool {
@@ -118,11 +133,11 @@ func main() {
 			}, func() { job.Stop() })
 		}
 		track.WaitForThreads()
-		track.StatsDisable()
+		track.DisplayReset()
+		holdDumpStats(stats)
 
-		dumpHoldStats(stats)
-
-		track.SetTitle("Clean up ... ")
+		track.SetTitle("Clean up")
+		track.DisplayCount()
 		for _, name := range perBarrier {
 			job := jobs[name]
 			track.RunFunc(name, func() bool {
@@ -135,7 +150,7 @@ func main() {
 	exitCode = 0
 }
 
-func dumpHoldStats(stats *support.StatsState) {
+func holdDumpStats(stats *support.StatsState) {
 	stats.Send(support.StatsRecord{OpType: support.StatHoldDisplay})
 	stats.Send(support.StatsRecord{OpType: support.StatDisplay})
 	stats.Send(support.StatsRecord{OpType: support.StatClear})

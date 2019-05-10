@@ -24,17 +24,15 @@ type tracking struct {
 	printer      *Printer
 	count        int
 	completeChan chan threadStatus
-	verbose      bool
-	doStats      bool
-	stats        *StatsState
+	display      func()
 }
 
-func TrackingInit(printer *Printer, stats *StatsState) *tracking {
+func TrackingInit(printer *Printer) *tracking {
 	t := &tracking{}
 	t.completeChan = make(chan threadStatus, 10)
 	t.printer = printer
 	t.nodes = map[string]*trackingInfo{}
-	t.stats = stats
+	t.display = emptyDisplayFunc
 	return t
 }
 
@@ -53,52 +51,47 @@ func (t *tracking) SetTitle(title string) {
 	t.title = title
 }
 
-func (t *tracking) VerboseSet() {
-	t.verbose = true
-}
-
-func (t *tracking) VerboseClear() {
-	t.verbose = false
-}
-
-func (t *tracking) StatsEnable() {
-	// Clear out the stats just before starting the jobs. The timer is running
-	// in the stats thread which means the time spent during the prepare phase
-	// would be counted against the elapsed time for these threads if we don't
-	// clear the stats now.
-	t.stats.Send(StatsRecord{OpType: StatClear})
-	t.stats.Send(StatsRecord{OpType: StatRelDisplay})
-	t.doStats = true
-}
-
-func (t *tracking) StatsDisable() {
-	t.doStats = false
-}
-
 func (t *tracking) UpdateName(name string, extra string) {
 	ti := t.nodes[name]
 	ti.extraTag = extra
 }
 
-func (t *tracking) WaitForThreads() {
-	var cols = 80
+func (t *tracking) DisplaySet(display func()) {
+	t.display = display
+}
 
+func (t *tracking) DisplayCount() {
+	t.display = func() {
+		cols := 80
+		if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
+			cols = int(win.Width)
+		}
+		t.printer.Send("%*s\r%s ... %d\r", cols, "", t.title, t.count)
+	}
+}
+
+func (t *tracking) DisplayExtra() {
+	t.display = t.displayTrack
+}
+
+func emptyDisplayFunc() {}
+
+func (t *tracking) DisplayReset() {
+	t.display = emptyDisplayFunc
+}
+
+func (t *tracking) WaitForThreads() {
 	intrChans := make(chan os.Signal, 1)
 	signal.Notify(intrChans, os.Interrupt, os.Kill)
 
-	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
-		cols = int(win.Width)
-	}
 	tSec := time.Tick(time.Second)
 	for t.count > 0 {
 		select {
 		case status := <-t.completeChan:
 			t.removeNode(status.name)
-			if t.verbose == false {
-				t.printer.Send("%*s\r%s ... %d\r", cols, "", t.title, t.count)
-			}
+
 		case <-tSec:
-			t.displayTrack()
+			t.display()
 
 		case <-intrChans:
 			for _, v := range t.nodes {
@@ -112,14 +105,6 @@ func (t *tracking) WaitForThreads() {
 func (t *tracking) displayTrack() {
 	var cols = 80
 
-	if t.doStats {
-		t.printer.Send(t.stats.String())
-		return
-	}
-
-	if t.verbose == false {
-		return
-	}
 	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
 		cols = int(win.Width)
 	}
@@ -140,15 +125,14 @@ func (t *tracking) displayTrack() {
 	}
 	t.printer.Send("\r")
 }
+
 func (t *tracking) addNode(name string, stopper func()) {
 	t.nodes[name] = &trackingInfo{seen: true, extraTag: "", stopper: stopper}
 	t.count++
-	t.displayTrack()
 }
 
 func (t *tracking) removeNode(name string) {
 	ti := t.nodes[name]
 	ti.seen = false
 	t.count--
-	t.displayTrack()
 }

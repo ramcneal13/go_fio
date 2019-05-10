@@ -373,7 +373,6 @@ func (j *Job) fileFill(tracker *tracking) {
 		select {
 		case <-ticker:
 			fi, _ := j.fp.Stat()
-
 			tracker.UpdateName(j.TargetName, fmt.Sprintf(":%.1f",
 				float64(fi.Size())/float64(j.JobParams.fileSize)*100.0))
 
