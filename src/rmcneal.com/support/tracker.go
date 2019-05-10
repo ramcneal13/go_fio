@@ -2,6 +2,7 @@ package support
 
 import (
 	"fmt"
+	"os/signal"
 	"time"
 )
 import "os"
@@ -14,6 +15,7 @@ type threadStatus struct {
 type trackingInfo struct {
 	seen     bool
 	extraTag string
+	stopper  func()
 }
 
 type tracking struct {
@@ -23,18 +25,21 @@ type tracking struct {
 	count        int
 	completeChan chan threadStatus
 	verbose      bool
+	doStats      bool
+	stats        *StatsState
 }
 
-func TrackingInit(printer *Printer) *tracking {
+func TrackingInit(printer *Printer, stats *StatsState) *tracking {
 	t := &tracking{}
 	t.completeChan = make(chan threadStatus, 10)
 	t.printer = printer
 	t.nodes = map[string]*trackingInfo{}
+	t.stats = stats
 	return t
 }
 
-func (t *tracking) RunFunc(name string, f func() bool) {
-	t.addNode(name)
+func (t *tracking) RunFunc(name string, f func() bool, stopper func()) {
+	t.addNode(name, stopper)
 	go func() {
 		if f() {
 			t.completeChan <- threadStatus{name: name, okay: true}
@@ -48,8 +53,26 @@ func (t *tracking) SetTitle(title string) {
 	t.title = title
 }
 
-func (t *tracking) SetVerbose() {
+func (t *tracking) VerboseSet() {
 	t.verbose = true
+}
+
+func (t *tracking) VerboseClear() {
+	t.verbose = false
+}
+
+func (t *tracking) StatsEnable() {
+	// Clear out the stats just before starting the jobs. The timer is running
+	// in the stats thread which means the time spent during the prepare phase
+	// would be counted against the elapsed time for these threads if we don't
+	// clear the stats now.
+	t.stats.Send(StatsRecord{OpType: StatClear})
+	t.stats.Send(StatsRecord{OpType: StatRelDisplay})
+	t.doStats = true
+}
+
+func (t *tracking) StatsDisable() {
+	t.doStats = false
 }
 
 func (t *tracking) UpdateName(name string, extra string) {
@@ -59,6 +82,9 @@ func (t *tracking) UpdateName(name string, extra string) {
 
 func (t *tracking) WaitForThreads() {
 	var cols = 80
+
+	intrChans := make(chan os.Signal, 1)
+	signal.Notify(intrChans, os.Interrupt, os.Kill)
 
 	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
 		cols = int(win.Width)
@@ -73,6 +99,11 @@ func (t *tracking) WaitForThreads() {
 			}
 		case <-tSec:
 			t.displayTrack()
+
+		case <-intrChans:
+			for _, v := range t.nodes {
+				v.stopper()
+			}
 		}
 	}
 	t.printer.Send("\n")
@@ -80,6 +111,12 @@ func (t *tracking) WaitForThreads() {
 
 func (t *tracking) displayTrack() {
 	var cols = 80
+
+	if t.doStats {
+		t.printer.Send(t.stats.String())
+		return
+	}
+
 	if t.verbose == false {
 		return
 	}
@@ -103,8 +140,8 @@ func (t *tracking) displayTrack() {
 	}
 	t.printer.Send("\r")
 }
-func (t *tracking) addNode(name string) {
-	t.nodes[name] = &trackingInfo{seen: true, extraTag: ""}
+func (t *tracking) addNode(name string, stopper func()) {
+	t.nodes[name] = &trackingInfo{seen: true, extraTag: "", stopper: stopper}
 	t.count++
 	t.displayTrack()
 }

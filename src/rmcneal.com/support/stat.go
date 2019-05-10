@@ -67,6 +67,9 @@ type StatsState struct {
 	HistogramSize  [64]int64
 	HistoBitmap    [64][]byte // For per second display of activity
 	HistoNextAvail int
+	MarkerSeconds  int
+	LastIOPS       int64
+	LastBW         int64
 }
 
 func (s *StatsState) Send(record StatsRecord) {
@@ -117,10 +120,8 @@ func (s *StatsState) Flush() string {
 
 func (s *StatsState) StatsWorker() {
 	keepRunning := true
-	timeMarkers := time.Tick(time.Second)
 	recordMarkers := time.Tick(s.gcfg.recordTime)
-	var recordIOPS, recordRead, recordWrite, lastIops, lastBW int64 = 0, 0, 0, 0, 0
-	markerSeconds := 0
+	var recordIOPS, recordRead, recordWrite int64 = 0, 0, 0
 
 	for keepRunning {
 		select {
@@ -146,6 +147,7 @@ func (s *StatsState) StatsWorker() {
 					}
 				}
 				s.latency.Aggregate(r.opDuration)
+
 			case StatWrite:
 				s.Iops++
 				s.WriteIOPS++
@@ -166,6 +168,7 @@ func (s *StatsState) StatsWorker() {
 					}
 				}
 				s.latency.Aggregate(r.opDuration)
+
 			case StatClear:
 				ClearStruct(s)
 				s.ReadLatLow = time.Duration(^uint64(0) >> 1)
@@ -174,8 +177,8 @@ func (s *StatsState) StatsWorker() {
 				s.SampleSpeed = map[int]int64{}
 				s.runtime = s.gcfg.runtime
 				_, _ = fmt.Fprintln(s.fp, "# ---- Barrier request ----")
-				recordIOPS, recordRead, recordWrite, lastIops = 0, 0, 0, 0
-				markerSeconds = 0
+				recordIOPS, recordRead, recordWrite = 0, 0, 0
+
 			case StatSetHistogram:
 				var width int
 				if ws, err1 := GetWinsize(os.Stdout.Fd()); err1 != nil {
@@ -188,6 +191,7 @@ func (s *StatsState) StatsWorker() {
 				for i := range s.HistoBitmap {
 					s.HistoBitmap[r.opIdx][i] = ' '
 				}
+
 			case StatFlush:
 				/*
 				 * The fact that we're dealing with this operation means all previous
@@ -217,37 +221,38 @@ func (s *StatsState) StatsWorker() {
 			recordIOPS = s.Iops
 			recordRead = s.ReadBW
 			recordWrite = s.WriteBW
-
-		case <-timeMarkers:
-			var buffer bytes.Buffer
-
-			if s.holdDisplay {
-				break
-			}
-			_, _ = fmt.Fprintf(&buffer, "[%s]", SecsToHMSstr(markerSeconds))
-			markerSeconds++
-			if s.HistogramSize[0] == 0 {
-				s.printer.Send("%s iops: %6s, BW: %6s\r", buffer.String(), Humanize(s.Iops-lastIops, 1),
-					Humanize((s.ReadBW+s.WriteBW)-lastBW, 1))
-				lastIops = s.Iops
-				lastBW = s.ReadBW + s.WriteBW
-				break
-			}
-			for avail := range s.HistogramSize {
-				if s.HistogramSize[avail] != 0 {
-					for idx, v := range s.HistoBitmap[avail] {
-						_, _ = fmt.Fprintf(&buffer, "%c", v)
-						s.HistoBitmap[avail][idx] = ' '
-					}
-					s.printer.Send("%s\n", buffer.String())
-					buffer.Reset()
-					_, _ = fmt.Fprintf(&buffer, "%*s", 11, "")
-				}
-			}
 		}
 	}
 
 	s.statusChans <- "stat channel"
+}
+
+func (s *StatsState) String() string {
+	var buffer bytes.Buffer
+
+	if s.holdDisplay {
+		return ""
+	}
+	_, _ = fmt.Fprintf(&buffer, "[%s]", SecsToHMSstr(s.MarkerSeconds))
+	s.MarkerSeconds++
+	if s.HistogramSize[0] == 0 {
+		_, _ = fmt.Fprintf(&buffer, "iops: %6s, BW: %6s\r", Humanize(s.Iops-s.LastIOPS, 1),
+			Humanize((s.ReadBW+s.WriteBW)-s.LastBW, 1))
+		s.LastIOPS = s.Iops
+		s.LastBW = s.ReadBW + s.WriteBW
+	} else {
+		for avail := range s.HistogramSize {
+			if s.HistogramSize[avail] != 0 {
+				for idx, v := range s.HistoBitmap[avail] {
+					_, _ = fmt.Fprintf(&buffer, "%c", v)
+					s.HistoBitmap[avail][idx] = ' '
+				}
+				_, _ = fmt.Fprintf(&buffer, "\n%*s", 11, "")
+			}
+		}
+		fmt.Fprintf(&buffer, "\r")
+	}
+	return buffer.String()
 }
 
 /*

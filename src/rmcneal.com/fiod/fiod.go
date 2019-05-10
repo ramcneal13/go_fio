@@ -3,11 +3,9 @@ package main
 import (
 	"flag"
 	"os"
-	"os/signal"
 	"rmcneal.com/support"
 	"runtime"
 	"runtime/pprof"
-	"time"
 )
 
 var inputFile string
@@ -28,8 +26,7 @@ func main() {
 	var stats *support.StatsState = nil
 
 	jobs := map[string]*support.Job{}
-	jobExits := make(chan support.JobReport, 10)
-	intrChans := make(chan os.Signal, 1)
+
 	// All early returns are error conditions so the default will
 	// be an non-zero exit code. Only at the end after all tests
 	// have been completed successfully will the exitCode be set
@@ -55,7 +52,7 @@ func main() {
 		printer.Send("Config failure: %s\n", err)
 		return
 	}
-	signal.Notify(intrChans, os.Interrupt, os.Kill)
+
 	stats, err = support.StatsInit(&cfg.Global, printer)
 	if err != nil {
 		printer.Send("Failure to start stat engine: %s\n", err)
@@ -76,22 +73,21 @@ func main() {
 		printer.Send("%*s: %s\n", titleCol, "job-order", cfg.Global.Job_Order)
 	}
 
-	track := support.TrackingInit(printer)
-	for _, barrierGroups := range *cfg.GetBarrierOrder() {
-		jobsStarted := 0
+	track := support.TrackingInit(printer, stats)
+	for _, perBarrier := range *cfg.GetBarrierOrder() {
 		track.SetTitle("Preparing")
-		if len(barrierGroups) < 5 {
-			track.SetVerbose()
+		if len(perBarrier) < 5 {
+			track.VerboseSet()
 		}
-		for _, name := range barrierGroups {
+		for _, name := range perBarrier {
 			if jd, ok := cfg.Job[name]; !ok {
 				printer.Send("\nBad name in job list -- '%s'\n", name)
 			} else {
-				job := &support.Job{TargetName: name, JobParams: jd, Stats: stats}
-				jobs[name] = job
-				if err := job.Init(); err != nil {
-					printer.Send("[%s] %s\n", job.GetName(), err)
+				if job, err := support.JobInit(name, jd, stats); err != nil {
+					printer.Send("[%s] %s\n", name, err)
 					return
+				} else {
+					jobs[name] = job
 				}
 				if cfg.Global.Verbose {
 					printer.Send("---- [%s] ----\n", name)
@@ -99,7 +95,7 @@ func main() {
 				}
 			}
 		}
-		for _, name := range barrierGroups {
+		for _, name := range perBarrier {
 			job := jobs[name]
 			track.RunFunc(name, func() bool {
 				if err := job.FillAsNeeded(track); err == nil {
@@ -108,72 +104,31 @@ func main() {
 					printer.Send("[%s] %s\n", job.GetName(), err)
 					return false
 				}
-			})
+			}, func() { job.Stop() })
 		}
 		track.WaitForThreads()
 
-		printer.Send("Starting ... ")
-		// Clear out the stats just before starting the jobs. The timer is running
-		// in the stats thread which means the time spent during the prepare phase
-		// would be counted against the elapsed time for these threads if we don't
-		// clear the stats now.
-		stats.Send(support.StatsRecord{OpType: support.StatClear})
-		showStart := false
-		if len(barrierGroups) < 5 {
-			showStart = true
+		track.SetTitle("Run ... ")
+		track.StatsEnable()
+		for _, name := range perBarrier {
+			job := jobs[name]
+			track.RunFunc(name, func() bool {
+				job.Start()
+				return true
+			}, func() { job.Stop() })
 		}
-		for _, name := range barrierGroups {
-			if job, ok := jobs[name]; ok {
-				if showStart {
-					printer.Send("[%s] ", name)
-				}
-				go job.Start(jobExits)
-				jobsStarted++
-			} else {
-				printer.Send("\nImpossible condition; job %s not initiazed\n", name)
-				return
-			}
-		}
-		printer.Send("\n")
+		track.WaitForThreads()
+		track.StatsDisable()
 
-		statMarker := time.Tick(cfg.GetIntermediateStats())
-		// Now that the jobs have begun start displaying statistics on the output.
-		stats.Send(support.StatsRecord{OpType: support.StatRelDisplay})
-		runLoop := true
-		for runLoop {
-			select {
-			case <-statMarker:
-				stats.Send(support.StatsRecord{OpType: support.StatDisplay})
-
-			case rpt := <-jobExits:
-				if rpt.ReadErrors != 0 || rpt.WriteErrors != 0 {
-					printer.Send("Job [%s]: Errors(read: %d, write: %d)\n", rpt.Name, rpt.ReadErrors, rpt.WriteErrors)
-				}
-				jobsStarted--
-				if jobsStarted == 0 {
-					runLoop = false
-					break
-				}
-
-			case <-intrChans:
-				printer.Send("Impatient\n")
-				for _, name := range barrierGroups {
-					if job, ok := jobs[name]; ok {
-						job.Stop()
-					}
-				}
-			}
-		}
-		printer.Send("\n")
 		dumpHoldStats(stats)
 
 		track.SetTitle("Clean up ... ")
-		for _, name := range barrierGroups {
+		for _, name := range perBarrier {
 			job := jobs[name]
 			track.RunFunc(name, func() bool {
 				job.Fini()
 				return true
-			})
+			}, nil)
 		}
 		track.WaitForThreads()
 	}

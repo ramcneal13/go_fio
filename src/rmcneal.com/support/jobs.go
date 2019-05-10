@@ -45,8 +45,9 @@ type Job struct {
 	startTime    time.Time
 }
 
-func (j *Job) Init() error {
-	jd := j.JobParams
+func JobInit(name string, jd *JobData, stats *StatsState) (*Job, error) {
+	j := &Job{TargetName: name, JobParams: jd, Stats: stats}
+	j.JobParams = jd
 	j.validInit = false
 	openFlags := os.O_RDWR
 	// Used when writing out validation blocks
@@ -63,7 +64,7 @@ func (j *Job) Init() error {
 		openFlags |= os.O_CREATE
 	}
 	if j.fp, j.lastErr = os.OpenFile(j.pathName, openFlags, 0666); j.lastErr != nil {
-		return j.lastErr
+		return nil, j.lastErr
 	}
 	j.thrCompletes = make(chan JobReport)
 	j.nextBlks = make(chan AccessData, 1000)
@@ -81,14 +82,14 @@ func (j *Job) Init() error {
 			}
 		} else {
 			if pos, err := j.fp.Seek(0, 2); err != nil {
-				return err
+				return nil, err
 			} else {
 				// Override the size of the device with what the user specified.
 				if j.JobParams.fileSize != 0 {
 					pos = j.JobParams.fileSize
 				}
 				if pos == 0 {
-					return fmt.Errorf("can't find the size of device")
+					return nil, fmt.Errorf("can't find the size of device")
 				}
 				j.JobParams.fileSize = pos
 			}
@@ -96,7 +97,7 @@ func (j *Job) Init() error {
 
 		}
 	} else {
-		return err
+		return nil, err
 	}
 
 	if j.JobParams.Verbose {
@@ -117,7 +118,7 @@ func (j *Job) Init() error {
 	}
 
 	j.validInit = true
-	return nil
+	return j, nil
 }
 
 func (j *Job) FillAsNeeded(tracker *tracking) error {
@@ -174,13 +175,12 @@ func (j *Job) GetJobdata() *JobData {
 	return j.JobParams
 }
 
-func (j *Job) Start(jobExits chan JobReport) {
+func (j *Job) Start() {
 	thrExit := 0
 	keepRunning := true
 	finalReport := JobReport{ReadErrors: 0, WriteErrors: 0, Name: j.TargetName}
 
 	if j.validInit == false {
-		jobExits <- finalReport
 		return
 	}
 	j.threadRun = true
@@ -219,15 +219,12 @@ func (j *Job) Start(jobExits chan JobReport) {
 			break
 		}
 	}
-
-	// Signal the main loop that we've completed.
-	jobExits <- finalReport
 }
 
 func (j *Job) Fini() {
-	j.fp.Close()
+	_ = j.fp.Close()
 	if j.remove {
-		os.Remove(j.pathName)
+		_ = os.Remove(j.pathName)
 	}
 }
 
@@ -538,7 +535,7 @@ func (j *Job) ioWorker(workId int) {
 		ioDuration := time.Now().Sub(ioStart)
 		if (j.JobParams.Fsync != 0) && (opCnt >= j.JobParams.Fsync) {
 			opCnt = 0
-			j.fp.Sync()
+			_ = j.fp.Sync()
 		}
 		j.Stats.Send(StatsRecord{opSize: int64(len(ad.buf)), OpType: statType, opDuration: ioDuration,
 			opBlk: ad.blk, opIdx: j.statIdx})
