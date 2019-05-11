@@ -16,8 +16,6 @@ const (
 	StatDisplay
 	StatClear
 	StatStop
-	StatHoldDisplay
-	StatRelDisplay
 	StatSetHistogram
 	StatFlush
 )
@@ -40,7 +38,6 @@ type StatsState struct {
 	statusChans chan string
 	gcfg        *JobData
 	runtime     time.Duration
-	holdDisplay bool
 	printer     *Printer
 	latency     *DistroGraph
 
@@ -85,7 +82,6 @@ func StatsInit(global *JobData, printer *Printer) (*StatsState, error) {
 	s.SampleSpeed = map[int]int64{}
 	s.runtime = s.gcfg.runtime
 	s.SampleIdx = 0
-	s.holdDisplay = true
 	s.printer = printer
 	s.latency = DistroInit(printer, "Latency Distribution")
 	if global.doLinear {
@@ -202,19 +198,11 @@ func (s *StatsState) StatsWorker() {
 				s.StatsDump()
 			case StatStop:
 				keepRunning = false
-			case StatHoldDisplay:
-				s.holdDisplay = true
-			case StatRelDisplay:
-				s.holdDisplay = false
 			default:
 				s.printer.Send("Bad stat op request: op_type=%d\n", r.OpType)
 			}
 
 		case t := <-recordMarkers:
-			if s.holdDisplay {
-				break
-			}
-
 			_, _ = fmt.Fprintf(s.fp, "%02d:%02d:%02d, %d, %d, %d\n",
 				t.Hour(), t.Minute(), t.Second(), s.Iops-recordIOPS,
 				s.ReadBW-recordRead, s.WriteBW-recordWrite)
@@ -230,9 +218,6 @@ func (s *StatsState) StatsWorker() {
 func (s *StatsState) String() string {
 	var buffer bytes.Buffer
 
-	if s.holdDisplay {
-		return ""
-	}
 	_, _ = fmt.Fprintf(&buffer, "[%s]", SecsToHMSstr(s.MarkerSeconds))
 	s.MarkerSeconds++
 	if s.HistogramSize[0] == 0 {
@@ -250,7 +235,7 @@ func (s *StatsState) String() string {
 				_, _ = fmt.Fprintf(&buffer, "\n%*s", 11, "")
 			}
 		}
-		fmt.Fprintf(&buffer, "\r")
+		_, _ = fmt.Fprintf(&buffer, "\r")
 	}
 	return buffer.String()
 }

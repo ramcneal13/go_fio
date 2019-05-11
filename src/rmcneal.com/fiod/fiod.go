@@ -120,7 +120,6 @@ func main() {
 		// would be counted against the elapsed time for these threads if we don't
 		// clear the stats now.
 		stats.Send(support.StatsRecord{OpType: support.StatClear})
-		stats.Send(support.StatsRecord{OpType: support.StatRelDisplay})
 
 		track.SetTitle("Run")
 		track.DisplaySet(func() { printer.Send(stats.String()) })
@@ -134,7 +133,7 @@ func main() {
 		}
 		track.WaitForThreads()
 		track.DisplayReset()
-		holdDumpStats(stats)
+		stats.Send(support.StatsRecord{OpType: support.StatDisplay})
 
 		track.SetTitle("Clean up")
 		track.DisplayCount()
@@ -148,11 +147,4 @@ func main() {
 		track.WaitForThreads()
 	}
 	exitCode = 0
-}
-
-func holdDumpStats(stats *support.StatsState) {
-	stats.Send(support.StatsRecord{OpType: support.StatHoldDisplay})
-	stats.Send(support.StatsRecord{OpType: support.StatDisplay})
-	stats.Send(support.StatsRecord{OpType: support.StatClear})
-	stats.Flush()
 }

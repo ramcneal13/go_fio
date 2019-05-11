@@ -99,7 +99,13 @@ func (t *tracking) WaitForThreads() {
 			}
 		}
 	}
-	t.printer.Send("\n")
+	var cols = 80
+
+	if win, err := GetWinsize(os.Stdout.Fd()); err == nil {
+		cols = int(win.Width)
+	}
+	t.printer.Send("%*s\r%s ... done\n", cols-1, "", t.title)
+
 }
 
 func (t *tracking) displayTrack() {

@@ -119,7 +119,9 @@ func (d *DistroGraph) Graph() {
 		distroCol = len(strings.TrimSpace(fmt.Sprintf("%.0f", math.Pow(2, float64(lastIdx)))))
 	}
 	countCol = len(fmt.Sprintf("%d", count))
-
+	if len("count") > countCol {
+		countCol = len("count")
+	}
 	if ws, err := GetWinsize(os.Stdout.Fd()); err != nil {
 		windowSize = 80
 	} else {
@@ -133,7 +135,8 @@ func (d *DistroGraph) Graph() {
 
 	if d.title != "" {
 		if len(d.title) <= scalerCol {
-			d.printer.Send("%*s%*s%s\n", distroCol, "", (scalerCol-len(d.title))/2, "", d.title)
+			d.printer.Send("%*s%*s%s%*scount\n", distroCol, "ns", (scalerCol+2-len(d.title))/2, "", d.title,
+				(scalerCol+2-len(d.title))/2, "")
 		} else {
 			d.printer.Send(d.title)
 		}
