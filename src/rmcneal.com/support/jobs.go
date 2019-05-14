@@ -212,9 +212,10 @@ func (j *Job) Start() {
 				break
 			}
 		case <-boom:
-			// By setting threadRun to false the ioWorker threads
-			// will exit which will cause them to send a 1 to the
-			// thrCompletes channel.
+			// By setting threadRun to false genAccessData() will stop
+			// generating access data and send IODepth number of Stop
+			// requests down the channel. That it turn will cause the
+			// workers to stop.
 			j.threadRun = false
 			break
 		}
@@ -254,6 +255,16 @@ func (j *Job) patternFill(bp []byte) {
 		for i := range bp {
 			bp[i] = byte(0)
 		}
+	}
+}
+
+func (j *Job) genAccessData() {
+	for j.threadRun {
+		j.nextBlks <- j.oneAD()
+	}
+	ad := AccessData{0, StopType, nil}
+	for i := 0; i < j.JobParams.IODepth; i++ {
+		j.nextBlks <- ad
 	}
 }
 
@@ -386,12 +397,6 @@ func (j *Job) fileFill(tracker *tracking) {
 	}
 }
 
-func (j *Job) genAccessData() {
-	for {
-		j.nextBlks <- j.oneAD()
-	}
-}
-
 func (ad *AccessData) String() string {
 	return fmt.Sprintf("op=%s, blk=0x%x, size=%s\n", opToString(ad.op), ad.blk, Humanize(int64(len(ad.buf)), 1))
 }
@@ -479,7 +484,7 @@ func (j *Job) ioWorker(workId int) {
 	var buf []byte
 	rpt := JobReport{JobID: workId, ReadErrors: 0, WriteErrors: 0, ReadIOs: 0, WriteIOs: 0}
 	opCnt := 0
-	for j.threadRun {
+	for {
 		ad := <-j.nextBlks
 		ioStart := time.Now()
 		switch ad.op {
@@ -539,5 +544,4 @@ func (j *Job) ioWorker(workId int) {
 		j.Stats.Send(StatsRecord{opSize: int64(len(ad.buf)), OpType: statType, opDuration: ioDuration,
 			opBlk: ad.blk, opIdx: j.statIdx})
 	}
-	j.thrCompletes <- rpt
 }

@@ -5,7 +5,6 @@ import (
 	"os"
 	"rmcneal.com/support"
 	"runtime"
-	"runtime/pprof"
 )
 
 var inputFile string
@@ -22,7 +21,6 @@ func init() {
 func main() {
 	var cfg *support.Configs
 	var err error
-	var pperfFp *os.File = nil
 	var stats *support.StatsState = nil
 
 	jobs := map[string]*support.Job{}
@@ -37,9 +35,6 @@ func main() {
 	printer := support.PrintInit()
 
 	defer func() {
-		if pperfFp != nil {
-			pprof.StopCPUProfile()
-		}
 		if stats != nil {
 			stats.Send(support.StatsRecord{OpType: support.StatStop})
 			stats.Flush()
