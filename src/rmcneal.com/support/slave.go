@@ -334,7 +334,7 @@ func (s *SlaveState) parseAccessPattern() error {
 	}
 	if total < 100 {
 		e := AccessPattern{sectionPercent: 100 - total, opType: NoneType, blkSize: 0, readPercent: 0,
-			lastBlk: 0, sectionStart: 0, sectionEnd: 0, buf: nil}
+			lastBlk: 0, sectionStart: 0, sectionEnd: 0}
 		l.PushBack(e)
 	}
 	s.params.accessPattern = l
@@ -344,10 +344,6 @@ func (s *SlaveState) parseAccessPattern() error {
 		access.sectionStart = currentBlk
 		currentBlk += s.params.FileSize * int64(access.sectionPercent) / 100
 		access.sectionEnd = currentBlk - access.blkSize
-		access.buf = make([]byte, access.blkSize)
-		for i := range access.buf {
-			access.buf[i] = byte(rand.Intn(256))
-		}
 		e.Value = access
 	}
 	return nil
@@ -467,6 +463,9 @@ func (s *SlaveState) slaveWorker(id int) {
 	var stats WorkerStat
 	var totalLatency time.Duration = 0
 	var totalCount = 0
+	var buf []byte
+
+	lastBufSize := int64(0)
 	stats.Histogram = DistroInit(nil, "")
 	tick := time.Tick(time.Second)
 	boom := time.After(s.params.Runtime)
@@ -481,18 +480,22 @@ func (s *SlaveState) slaveWorker(id int) {
 			return
 		default:
 			ad := s.oneAD()
+			if ad.len != lastBufSize {
+				lastBufSize = ad.len
+				buf = make([]byte, lastBufSize)
+			}
 			start := time.Now()
 			switch ad.op {
 			case ReadBaseType:
 				stats.Reads++
-				stats.BytesRead += int64(len(ad.buf))
-				if _, err := s.targetDev.ReadAt(ad.buf, ad.blk); err != nil {
+				stats.BytesRead += ad.len
+				if _, err := s.targetDev.ReadAt(buf, ad.blk); err != nil {
 					stats.ReadErrors++
 				}
 			case WriteBaseType:
 				stats.Writes++
-				stats.BytesWritten += int64(len(ad.buf))
-				if _, err := s.targetDev.WriteAt(ad.buf, ad.blk); err != nil {
+				stats.BytesWritten += ad.len
+				if _, err := s.targetDev.WriteAt(buf, ad.blk); err != nil {
 					stats.WriteErrors++
 				}
 			}
@@ -528,7 +531,7 @@ func (s *SlaveState) oneAD() AccessData {
 		// Otherwise, subtract the current range from the section and
 		// go to the next one.
 		if access.sectionPercent > section {
-			ad.buf = access.buf
+			ad.len = access.blkSize
 
 			// Generate the block number for the next request.
 			switch access.opType {
@@ -539,7 +542,7 @@ func (s *SlaveState) oneAD() AccessData {
 				}
 				ad.blk = access.lastBlk
 			case ReadRandType, WriteRandType, RwrandType:
-				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - int64(len(ad.buf))) / 512)
+				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - ad.len) / 512)
 				ad.blk = randBlk*512 + access.sectionStart
 				access.lastBlk = ad.blk
 			default:

@@ -73,6 +73,7 @@ type JobData struct {
 	Intermediate_Stats string
 	Save_On_Create     bool
 	Force_Fill         bool
+	Reset_Buf		int
 
 	// To make things easier for the user certain values
 	// in the config file need to be processed beyond
@@ -192,18 +193,20 @@ type AccessPattern struct {
 	sectionPercent int
 	opType         int
 	blkSize        int64
+
 	// For read/write operations the percentage of Reads verses Writes can be
 	// changed. The default will be 50/50.
 	readPercent int
+
 	// Used to hold last block created for this section. Primarily needed
 	// for seqential access so that different threads receive the next
 	// block in sequence.
 	lastBlk int64
+
 	// Block ranges for this section. These will be computed once the
 	// underlying storage has been opened and it's size determined
 	sectionStart int64
 	sectionEnd   int64
-	buf          []byte
 }
 
 //
@@ -262,7 +265,7 @@ func (j *JobData) parseAccessPattern() error {
 	}
 	if total < 100 {
 		e := AccessPattern{sectionPercent: 100 - total, opType: NoneType, blkSize: 0, readPercent: 0,
-			lastBlk: 0, sectionStart: 0, sectionEnd: 0, buf: nil}
+			lastBlk: 0, sectionStart: 0, sectionEnd: 0}
 		l.PushBack(e)
 	}
 	j.accessPattern = l
@@ -354,6 +357,10 @@ func (j *JobData) validate(section string) error {
 	}
 	if j.Slave_Host == "" {
 		j.Slave_Host = "127.0.0.1"
+	}
+
+	if j.Reset_Buf == 0 {
+		j.Reset_Buf = 1
 	}
 	return nil
 }
@@ -449,6 +456,9 @@ func (c *Configs) UpdateJobs() error {
 		}
 		if jd.Access_Pattern == "" {
 			jd.Access_Pattern = c.Global.Access_Pattern
+		}
+		if jd.Reset_Buf == 0 {
+			jd.Reset_Buf = c.Global.Reset_Buf
 		}
 		// -- Don't copy Verbose from the global settings to each job. Verbose
 		// is specific to each section.

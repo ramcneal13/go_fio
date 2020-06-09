@@ -31,6 +31,10 @@ runtime=1m
 name=fubar
 ; verbose
 
+; After some number of write operations reset the outgoing buffer pattern.
+; Defaults to 1 which can be very CPU intensive.
+reset-buf=1000
+
 size=1g
 
 ; fsync is the number of I/O's sent before calling sync. Default value

@@ -136,11 +136,7 @@ func (s *StatsState) StatsWorker() {
 				}
 				if s.HistogramSize[r.opIdx] != 0 {
 					idx := r.opBlk / (s.HistogramSize[r.opIdx] / int64(len(s.HistoBitmap[r.opIdx])))
-					if r.opDuration.Nanoseconds() > int64(100*time.Millisecond) {
-						s.HistoBitmap[r.opIdx][idx] = '0'
-					} else if s.HistoBitmap[r.opIdx][idx] != '0' {
-						s.HistoBitmap[r.opIdx][idx] = 'r'
-					}
+					s.HistoBitmap[r.opIdx][idx] = 'r'
 				}
 				s.latency.Aggregate(r.opDuration)
 
@@ -157,11 +153,7 @@ func (s *StatsState) StatsWorker() {
 				}
 				if s.HistogramSize[r.opIdx] != 0 {
 					idx := r.opBlk / (s.HistogramSize[r.opIdx] / int64(len(s.HistoBitmap[r.opIdx])))
-					if r.opDuration.Nanoseconds() > int64(100*time.Millisecond) {
-						s.HistoBitmap[r.opIdx][idx] = '0'
-					} else if s.HistoBitmap[r.opIdx][idx] != '0' {
-						s.HistoBitmap[r.opIdx][idx] = 'w'
-					}
+					s.HistoBitmap[r.opIdx][idx] = 'w'
 				}
 				s.latency.Aggregate(r.opDuration)
 

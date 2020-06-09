@@ -14,7 +14,7 @@ import (
 type AccessData struct {
 	blk int64
 	op  int
-	buf []byte
+	len	int64
 }
 
 type JobReport struct {
@@ -112,8 +112,6 @@ func JobInit(name string, jd *JobData, stats *StatsState) (*Job, error) {
 		access.lastBlk = currentBlk
 		currentBlk += j.JobParams.fileSize * int64(access.sectionPercent) / 100
 		access.sectionEnd = currentBlk - access.blkSize
-		access.buf = make([]byte, access.blkSize)
-		j.patternFill(access.buf[0:access.blkSize])
 		e.Value = access
 	}
 
@@ -140,7 +138,7 @@ func (j *Job) FillAsNeeded(tracker *tracking) error {
 		}
 	} else {
 		// This should really only be done if the configuration is going to request
-		// some veriant of a verify operation which will need the data pattern
+		// some variant of a verify operation which will need the data pattern
 		// correctly laid out on the device.
 		if j.JobParams.Force_Fill {
 			j.fileFill(tracker)
@@ -262,7 +260,7 @@ func (j *Job) genAccessData() {
 	for j.threadRun {
 		j.nextBlks <- j.oneAD()
 	}
-	ad := AccessData{0, StopType, nil}
+	ad := AccessData{0, StopType, 0}
 	for i := 0; i < j.JobParams.IODepth; i++ {
 		j.nextBlks <- ad
 	}
@@ -278,8 +276,7 @@ func (j *Job) oneAD() AccessData {
 		// Otherwise, subtract the current range from the section and
 		// go to the next one.
 		if access.sectionPercent > section {
-			ad.buf = access.buf
-
+			ad.len = access.blkSize
 			// Generate the block number for the next request.
 			switch access.opType {
 			case ReadSeqType, WriteSeqType, RwseqType, ReadSeqVerifyType:
@@ -290,7 +287,7 @@ func (j *Job) oneAD() AccessData {
 				ad.blk = access.lastBlk
 
 			case ReadRandType, WriteRandType, RwrandType, RwrandVerifyType:
-				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - int64(len(ad.buf))) / 512)
+				randBlk := rand.Int63n((access.sectionEnd - access.sectionStart - ad.len) / 512)
 				ad.blk = randBlk*512 + access.sectionStart
 
 			case NoneType:
@@ -353,7 +350,7 @@ func (j *Job) fileFill(tracker *tracking) {
 	go func() {
 		var curBlock int64
 		for curBlock = int64(0); (curBlock + fillSize) <= lastBlock; curBlock += fillSize {
-			ad := AccessData{op: WriteBaseVerifyType, buf: buf, blk: curBlock}
+			ad := AccessData{op: WriteBaseVerifyType, blk: curBlock, len: int64(1024 * 1024)}
 			j.nextBlks <- ad
 		}
 
@@ -362,8 +359,7 @@ func (j *Job) fileFill(tracker *tracking) {
 		// will access the data. So, create a final write request that accounts for that
 		// last little bit.
 		if (lastBlock - curBlock) > 0 {
-			lastBuf := make([]byte, lastBlock-curBlock)
-			ad := AccessData{op: WriteBaseVerifyType, buf: lastBuf, blk: curBlock}
+			ad := AccessData{op: WriteBaseVerifyType, blk: curBlock, len: lastBlock - curBlock}
 			j.nextBlks <- ad
 		}
 
@@ -398,7 +394,7 @@ func (j *Job) fileFill(tracker *tracking) {
 }
 
 func (ad *AccessData) String() string {
-	return fmt.Sprintf("op=%s, blk=0x%x, size=%s\n", opToString(ad.op), ad.blk, Humanize(int64(len(ad.buf)), 1))
+	return fmt.Sprintf("op=%s, blk=0x%x, size=%s\n", opToString(ad.op), ad.blk, Humanize(ad.len, 1))
 }
 
 func opToString(op int) string {
@@ -482,24 +478,27 @@ func (j *Job) initBuf(buf []byte, blockNum int64) {
 func (j *Job) ioWorker(workId int) {
 	var statType int
 	var buf []byte
+
+	lastSizeUsed := int64(0)
+	resetBufCount := 0
 	rpt := JobReport{JobID: workId, ReadErrors: 0, WriteErrors: 0, ReadIOs: 0, WriteIOs: 0}
 	opCnt := 0
 	for {
 		ad := <-j.nextBlks
+		if ad.len != lastSizeUsed {
+			lastSizeUsed = ad.len
+			buf = make([]byte, lastSizeUsed)
+			j.patternFill(buf)
+		}
 		ioStart := time.Now()
 		switch ad.op {
 		case ReadBaseType, ReadBaseVerifyType:
 			statType = StatRead
 			rpt.ReadIOs++
-			if ad.op == ReadBaseVerifyType {
-				buf = make([]byte, len(ad.buf))
-			} else {
-				buf = ad.buf
-			}
 			if _, err := j.fp.ReadAt(buf, ad.blk); err != nil {
 				rpt.ReadErrors++
 				if j.bailOnError {
-					fmt.Printf("ReadAt error(0x%x:0x%x) : %s\n", ad.blk, len(ad.buf), err)
+					fmt.Printf("ReadAt error(0x%x:0x%x) : %s\n", ad.blk, ad.len, err)
 					j.threadRun = false
 					break
 				} else {
@@ -515,15 +514,17 @@ func (j *Job) ioWorker(workId int) {
 			statType = StatWrite
 			rpt.WriteIOs++
 			if ad.op == WriteBaseVerifyType {
-				buf = make([]byte, len(ad.buf))
 				j.initBuf(buf, ad.blk)
 			} else {
-				buf = ad.buf
+				if (resetBufCount % j.JobParams.Reset_Buf) == 0 {
+					j.patternFill(buf)
+				}
+				resetBufCount += 1
 			}
 			if _, err := j.fp.WriteAt(buf, ad.blk); err != nil {
 				rpt.WriteErrors++
 				if j.bailOnError {
-					fmt.Printf("WriteAt error(0x%x:0x%x)\n  : %s\n", ad.blk, len(ad.buf), err)
+					fmt.Printf("WriteAt error(0x%x:0x%x)\n  : %s\n", ad.blk, ad.len, err)
 					j.threadRun = false
 					break
 				} else {
@@ -541,7 +542,7 @@ func (j *Job) ioWorker(workId int) {
 			opCnt = 0
 			_ = j.fp.Sync()
 		}
-		j.Stats.Send(StatsRecord{opSize: int64(len(ad.buf)), OpType: statType, opDuration: ioDuration,
+		j.Stats.Send(StatsRecord{opSize: ad.len, OpType: statType, opDuration: ioDuration,
 			opBlk: ad.blk, opIdx: j.statIdx})
 	}
 }
