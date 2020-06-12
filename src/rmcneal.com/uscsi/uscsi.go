@@ -109,7 +109,7 @@ func dumpMemory(buf []byte, n int, prefix string) {
 
 func dumpLine(buf []byte, n int, offset int64, offset_width int) {
 	hexDump(buf, n, offset, offset_width)
-	asciiDump(buf, n, offset)
+	asciiDump(buf, n)
 	fmt.Printf("\n")
 }
 

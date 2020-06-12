@@ -3,13 +3,18 @@ package main
 import (
 	"os"
 	"fmt"
-	"strings"
 )
 
-type bitMaskPage86 struct {
+type bitMaskBitDump struct {
 	byteOffset	byte
 	rightShift	uint8
 	mask		byte
+	name		string
+}
+
+type multiByteDump struct {
+	byteOffset	int
+	numberBytes	int
 	name		string
 }
 
@@ -21,37 +26,83 @@ var NAAField map[byte]string
 var codeSet map[byte]string
 var deviceType map[byte]string
 var ataCommandCode map[byte]string
-var extendInquiry []bitMaskPage86
+var extendInquiry []bitMaskBitDump
+var modePagePolicy map[byte]string
+var powerConditionBits []bitMaskBitDump
+var powerConditionBytes []multiByteDump
+var powerConsumptionUnits map[byte]string
+var standardInquiryBits []bitMaskBitDump
 
 func init() {
-	extendInquiry = []bitMaskPage86{}
-	extendInquiry = append(extendInquiry, bitMaskPage86{0, 0, 0x1f, "device type"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{4, 6, 0x3, "Active Microcode"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{4, 3, 0x7, "SPT"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{4, 2, 0x1, "GRD_CHK"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{4, 1, 0x1, "APP_CHK"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{4, 0, 0x1, "REF_CHK"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{5, 5, 0x1, "UASK_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{5, 4, 0x1, "GROUP_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{5, 3,  0x1, "PRIOR_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{5, 2, 0x1, "HEADSUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{5, 1, 1, "ORDSUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{5, 0, 1, "SIMPSUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{6, 3, 1, "WU_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{6, 2, 1, "CRD_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{6, 1, 1, "NV_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{6, 0, 1, "V_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{7, 4, 1, "P_I_I_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{7, 0, 1, "LUICLR"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{8, 4, 1, "R_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{8, 0, 1, "CBCS"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{9, 0, 0xf,
-	"MULTI I_T MICROCODE DOWNLOAD"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{12, 7, 1, "POA_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{12, 6, 1, "HRA_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{12, 5, 1, "VSA_SUP"})
-	extendInquiry = append(extendInquiry, bitMaskPage86{13, 0, 0xff,
-	"Maximum supported sense data length"})
+	extendInquiry = []bitMaskBitDump{
+		{0, 0, 0x1f, "device type"},
+		{4, 6, 0x3, "Active Microcode"},
+		{4, 3, 0x7, "SPT"},
+		{4, 2, 0x1, "GRD_CHK"},
+		{4, 1, 0x1, "APP_CHK"},
+		{4, 0, 0x1, "REF_CHK"},
+		{5, 5, 0x1, "UASK_SUP"},
+		{5, 4, 0x1, "GROUP_SUP"},
+		{5, 3, 0x1, "PRIOR_SUP"},
+		{5, 2, 0x1, "HEADSUP"},
+		{5, 1, 1, "ORDSUP"},
+		{5, 0, 1, "SIMPSUP"},
+		{6, 3, 1, "WU_SUP"},
+		{6, 2, 1, "CRD_SUP"},
+		{6, 1, 1, "NV_SUP"},
+		{6, 0, 1, "V_SUP"},
+		{7, 4, 1, "P_I_I_SUP"},
+		{7, 0, 1, "LUICLR"},
+		{8, 4, 1, "R_SUP"},
+		{8, 0, 1, "CBCS"},
+		{9, 0, 0xf, "MULTI I_T MICROCODE DOWNLOAD"},
+		{12, 7, 1, "POA_SUP"},
+		{12, 6, 1, "HRA_SUP"},
+		{12, 5, 1, "VSA_SUP"},
+		{13, 0, 0xff, "Maximum supported sense data length"},
+	}
+
+	powerConditionBits = []bitMaskBitDump{
+		{4, 1, 1, "Standby_y"},
+		{4, 0, 1, "Standby_z"},
+		{5, 2, 1, "Idle_c" },
+		{5, 1, 1, "Idle_b"},
+		{5, 0, 1, "Idle_a"},
+	}
+
+	powerConditionBytes = []multiByteDump {
+		{6, 2, "Stopped condition recovery time (ms)"},
+		{8, 2, "Standby_z condition recovery time (ms)"},
+		{10, 2, "Standby_y condition recovery time (ms)"},
+		{12, 2, "Idle_a condition recovery time (ms)"},
+		{14, 2, "Idle_b condition recovery time (ms)"},
+		{16, 2, "Idle_c condition recovery time (ms)"},
+	}
+
+	standardInquiryBits = []bitMaskBitDump {
+		{1,7,1, "RMB"},
+		{1,6,1, "LU_CONG"},
+		{2,0,0xff, "Version"},
+		{3,5,1, "NormACA"},
+		{3,4,1, "HiSup"},
+		{3,0,0xf, "Response_Data_Format"},
+		{5,7,1, "SCCS"},
+		{5,6,1, "ACC"},
+		{5,4, 0x3, "TPGS"},
+		{5,3,1,"3PC"},
+		{5, 0,1,"Protect"},
+		{6,6,1,"EncServ"},
+		{6,5,1,"VS"},
+		{6,4,1,"MultiP"},
+		{6,0,1,"ADDR16"},
+		{7,5,1,"WBUS16"},
+		{7,4,1,"SYNC"},
+		{7,1, 1,"CmdQue"},
+		{7,0,1,"VS"},
+		{56,2,3,"Clocking"},
+		{56,1,1,"QAS"},
+		{56,1,1,"IUS"},
+	}
 
 	pageCodeStrings = map[byte]string{
 		0x89: "ASCII Information",
@@ -73,10 +124,17 @@ func init() {
 	}
 
 	pageCodeFuncs = map[byte]func([]byte, int) {
+		0x00: decodePage00,
 		0x80: decodePage80,
 		0x83: decodePage83,
 		0x86: decodePage86,
+		0x87: decodePage87,
+		0x88: decodePage88,
 		0x89: decodePage89,
+		0x8a: decodePage8a,
+		0x8d: decodePage8d,
+		0x90: decodePage90,
+		0x91: decodePage91,
 	}
 
 	protocolIndentifier = map[byte]string {
@@ -142,6 +200,22 @@ func init() {
 		0xa1: "IDENTIFY PACKET DEVICE",
 		0x00: "Other device types",
 	}
+
+	modePagePolicy = map[byte]string {
+		0x00: "Shared",
+		0x01: "Per target port",
+		0x02: "Obsolete",
+		0x03: "Per I_T nexus",
+	}
+
+	powerConsumptionUnits = map[byte]string {
+		0x00: "Gigawatts",
+		0x01: "Megawatts",
+		0x02: "Kilowatts",
+		0x03: "Watts",
+		0x04: "Milliwatts",
+		0x05: "Microwatts",
+	}
 }
 
 func scsiInquiryCommand(fp *os.File) {
@@ -161,7 +235,13 @@ func scsiInquiryCommand(fp *os.File) {
 		}
 
 		if evpd == 1 {
-			decodePageData(byte(inquiryPage), data, length)
+			page := byte(inquiryPage)
+			if dataDecoder, ok := pageCodeFuncs[page]; ok {
+				fmt.Printf("%s\n", pageCodeStrings[page])
+				dataDecoder(data, length)
+			} else {
+				fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+			}
 		} else {
 			decodeStandInquiry(data, length)
 		}
@@ -187,95 +267,73 @@ func scsiInquiry(fp *os.File, evpd byte, pageCode byte) ([]byte, int, error) {
 		dumpLine(cdb, len(cdb), 0, 2)
 	}
 
-	len, err := sendUSCSI(fp, cdb, data, 0)
+	dataLen, err := sendUSCSI(fp, cdb, data, 0)
 
-	return data, len, err
+	return data, dataLen, err
 }
 
-func decodePageData(page byte, data []byte, len int) {
-	switch page {
-	case 0:
-		fmt.Printf("%4s | %5s\n", "Page", "Title")
-		fmt.Printf("-----+--------------------------\n")
-		for index := 4; index < len; index += 1 {
-			if cmdTitle, ok := pageCodeStrings[data[index]]; ok {
-				fmt.Printf("  %02x | %s\n", data[index], cmdTitle)
-			}
+func decodeStandInquiry(data []byte, dataLen int) {
+	fmt.Printf("Standard INQUIRY Data\n")
+	fmt.Printf("  Device type     : %s\n", deviceType[data[0] & 0x1f])
+	fmt.Printf("  T10 Vendor ID   : ")
+	for i := 8; i < 16; i++ {
+		fmt.Printf("%c", data[i])
+	}
+	fmt.Printf("\n  Product ID      : ")
+	for i := 16; i < 32; i++ {
+		fmt.Printf("%c", data[i])
+	}
+	fmt.Printf("\n  Product Revision: ")
+	for i := 32; i < 36; i++ {
+		fmt.Printf("%c", data[i])
+	}
+	fmt.Printf("\n    ")
+	outputLen := 4
+	for _, bits := range standardInquiryBits {
+		str := fmt.Sprintf("%s=%d", bits.name, data[bits.byteOffset] >> bits.rightShift & bits.mask)
+		if outputLen + len(str) + 1 >= 80 {
+			fmt.Printf("\n    ")
+			outputLen = 4
 		}
-	default:
-		if dataDecoder, ok := pageCodeFuncs[page]; ok {
-			fmt.Printf("%s\n", pageCodeStrings[page])
-			dataDecoder(data, len)
-		} else {
-			fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+		outputLen += len(str) + 1
+		fmt.Printf("%s ", str)
+	}
+	fmt.Printf("\n  Remaining %d bytes of INQUIRY data\n", data[4])
+	dumpMemory(data[36:], dataLen - 36, "    ")
+}
+
+func decodePage00(data []byte, dataLen int) {
+	var supportedPage string
+
+	fmt.Printf("%4s | %5s\n", "Page", "Title")
+	fmt.Printf("-----+--------------------------\n")
+	for index := 4; index < dataLen; index += 1 {
+		if cmdTitle, ok := pageCodeStrings[data[index]]; ok {
+			if _, ok := pageCodeFuncs[data[index]]; ok {
+				supportedPage = ""
+			} else {
+				supportedPage = "(not yet supported)"
+			}
+			fmt.Printf("  %02x | %s %s\n", data[index], cmdTitle, supportedPage)
 		}
 	}
 }
 
-func decodePage80(data []byte, len int) {
+func decodePage80(data []byte, dataLen int) {
 	fmt.Printf("  Device type  : %s\n", deviceType[data[0] & 0x1f])
 	fmt.Printf("  Serial number: ")
-	for i := 4; i < len; i++ {
+	for i := 4; i < dataLen; i++ {
 		fmt.Printf("%c", data[i])
 	}
 	fmt.Printf("\n")
 }
 
-func decodePage83(data []byte, len int) {
+func decodePage83(data []byte, unused int) {
 	count := 1
 	for offset := 4; offset < int(data[2] << 8 | data[3]); count++ {
 		fmt.Printf("  ---- Destriptor %d ----\n", count)
 		offset = designationDescDecode(data[offset:], offset)
 	}
-}
-
-func decodePage86(data []byte, len int) {
-	lineLength := 2
-	fmt.Printf("  ")
-	for _, bits := range extendInquiry {
-		str := fmt.Sprintf("%s=%d", bits.name, (data[bits.byteOffset] >> bits.rightShift) & bits.mask)
-		nr := strings.NewReader(str)
-		if lineLength + nr.Len() + 1 >= 80 {
-			fmt.Printf("\n  ")
-			lineLength = 2
-		}
-		fmt.Printf("%s ", str)
-		lineLength = lineLength + nr.Len() + 1
-	}
-	fmt.Printf("\n  Self-test completion minutes=%d\n", data[10] << 8 | data[11])
-}
-
-func decodePage89(data []byte, len int) {
-	fmt.Printf("  Device type         : %s\n", deviceType[data[0] & 0x1f])
-	fmt.Printf("  SAT Vendor ID       : ")
-	for i := 8; i < 16; i++ {
-		fmt.Printf("%c", data[i])
-	}
-	fmt.Printf("\n  SAT Product ID      : ")
-	for i := 16; i < 32; i++ {
-		fmt.Printf("%c", data[i])
-	}
-	fmt.Printf("\n  SAT Product revision: ")
-	for i := 32; i < 36; i++ {
-		fmt.Printf("%c", data[i])
-	}
-	fmt.Printf("\n  ATA Device signature:\n    ")
-	dumpMemory(data[36:], 20, "    ")
-	fmt.Printf("\n  ATA command         : %s\n", ataCommandCode[data[56]])
-	fmt.Printf("  Serial number       : ")
-	for i := 10; i <= 19; i++ {
-		fmt.Printf("%c%c", data[60 + (i * 2) + 1], data[60 + (i * 2)])
-	}
-	fmt.Printf("\n  Firmware version    : ")
-	for i := 23; i <= 26; i++ {
-		fmt.Printf("%c%c", data[60 + (i * 2) + 1], data[60 + (i * 2)])
-	}
-	fmt.Printf("\n  Model number        : ")
-	for i := 27; i <= 46; i++ {
-		fmt.Printf("%c%c", data[60 + (i * 2) + 1], data[60 + (i * 2)])
-	}
-	fmt.Printf("\n  Raw ATA IDENTIFY DATA\n")
-	dumpMemory(data[60:], len - 60, "    ")
 }
 
 func designationDescDecode(data []byte, offset int) int {
@@ -336,20 +394,154 @@ func designationDescDecode(data []byte, offset int) int {
 	return offset + int(data[3]) + 4
 }
 
-func decodeStandInquiry(data []byte, len int) {
-	fmt.Printf("Standard INQUIRY Data\n")
-	fmt.Printf("  Device type     : %s\n", deviceType[data[0] & 0x1f])
-	fmt.Printf("  T10 Vendor ID   : ")
+func decodePage86(data []byte, unused int) {
+	lineLength := 2
+	fmt.Printf("  ")
+	for _, bits := range extendInquiry {
+		str := fmt.Sprintf("%s=%d", bits.name, (data[bits.byteOffset] >> bits.rightShift) & bits.mask)
+		if lineLength + len(str) + 1 >= 80 {
+			fmt.Printf("\n  ")
+			lineLength = 2
+		}
+		fmt.Printf("%s ", str)
+		lineLength += len(str) + 1
+	}
+	fmt.Printf("\n  Self-test completion minutes=%d\n", data[10] << 8 | data[11])
+}
+
+func decodePage87(data []byte, dataLen int) {
+	for i := 4; i < dataLen; i += 4 {
+		fmt.Printf("  Policy page code: 0x%x, subpage code: 0x%x\n", data[i], data[i + 1])
+		fmt.Printf("    MLUS=%d, Policy: %s\n", data[i + 2] >> 7, modePagePolicy[data[i + 2] & 0x3])
+	}
+}
+
+func decodePage88(data []byte, dataLen int) {
+	fmt.Printf("  Page Length: %d\n", int(data[2]) << 8 | int(data[3]))
+	for offset := 4; offset < dataLen; {
+		offset = decodeSCSIPort(data[offset:], offset)
+	}
+}
+
+func decodeSCSIPort(data []byte, offset int) int {
+	fmt.Printf("  Relative Port Identifer: 0x%x\n", int(data[2]) << 8 | int(data[3]))
+
+	initiatorLength := int(data[6]) << 8 | int(data[7])
+	fmt.Printf("  Initiator Port ID length: %d\n", initiatorLength)
+	dumpMemory(data[8:], initiatorLength, "    ")
+
+	targetPortLength := int(data[8 + initiatorLength + 2]) << 8 | int(data[8 + initiatorLength + 3])
+	fmt.Printf("  Target Port descriptors length: %d\n", targetPortLength)
+
+	targetPortData := data[8 + initiatorLength + 4:]
+	for targetOffset := 0; targetOffset < targetPortLength; {
+		targetOffset = decodeTargetPort(targetPortData, targetOffset)
+	}
+
+	return 8 + initiatorLength + 4 + targetPortLength + offset
+}
+
+func decodeTargetPort(data []byte, offset int) int {
+	targetPortLength := int(data[3])
+	fmt.Printf("    Protocol: %s\n", protocolIndentifier[data[0] >> 4])
+	fmt.Printf("    Code set: %s\n", codeSet[data[0] & 0xf])
+	fmt.Printf("    Designator type: %s\n", designatorType[data[1] & 0xf])
+	fmt.Printf("    [")
+	for i := 0; i < targetPortLength; i++ {
+		fmt.Printf("%02x", data[i + 4])
+	}
+	fmt.Printf("]\n")
+
+	return offset + targetPortLength + 4
+}
+
+func decodePage89(data []byte, dataLen int) {
+	fmt.Printf("  Device type         : %s\n", deviceType[data[0] & 0x1f])
+	fmt.Printf("  SAT Vendor ID       : ")
 	for i := 8; i < 16; i++ {
 		fmt.Printf("%c", data[i])
 	}
-	fmt.Printf("\n  Product ID      : ")
+	fmt.Printf("\n  SAT Product ID      : ")
 	for i := 16; i < 32; i++ {
 		fmt.Printf("%c", data[i])
 	}
-	fmt.Printf("\n  Product Revision: ")
+	fmt.Printf("\n  SAT Product revision: ")
 	for i := 32; i < 36; i++ {
 		fmt.Printf("%c", data[i])
 	}
+	fmt.Printf("\n  ATA Device signature:\n    ")
+	dumpMemory(data[36:], 20, "    ")
+	fmt.Printf("\n  ATA command         : %s\n", ataCommandCode[data[56]])
+	fmt.Printf("  Serial number       : ")
+	for i := 10; i <= 19; i++ {
+		fmt.Printf("%c%c", data[60 + (i * 2) + 1], data[60 + (i * 2)])
+	}
+	fmt.Printf("\n  Firmware version    : ")
+	for i := 23; i <= 26; i++ {
+		fmt.Printf("%c%c", data[60 + (i * 2) + 1], data[60 + (i * 2)])
+	}
+	fmt.Printf("\n  Model number        : ")
+	for i := 27; i <= 46; i++ {
+		fmt.Printf("%c%c", data[60 + (i * 2) + 1], data[60 + (i * 2)])
+	}
+	fmt.Printf("\n  Raw ATA IDENTIFY DATA\n")
+	dumpMemory(data[60:], dataLen- 60, "    ")
+}
+
+func decodePage8a(data []byte, unused int) {
+	outputLength := 2
+	fmt.Printf("  ")
+	for _, bits := range powerConditionBits {
+		str := fmt.Sprintf("%s=%d", bits.name, (data[bits.byteOffset] >> bits.rightShift) & bits.mask)
+		if outputLength + len(str) + 1 >= 80 {
+			fmt.Printf("\n  ")
+			outputLength = 2
+		}
+		outputLength += len(str) + 1
+		fmt.Printf("%s ", str)
+	}
 	fmt.Printf("\n")
+	for _, bytes := range powerConditionBytes {
+		val := 0
+		for i := 0; i < bytes.numberBytes; i++ {
+			val = (val << 8) | int(data[bytes.byteOffset + i])
+		}
+		fmt.Printf("  %s: %d\n", bytes.name, val)
+	}
+}
+
+func decodePage8d(data []byte, dataLen int) {
+	for offset := 4; offset < dataLen; offset += 4 {
+		fmt.Printf("  Power consumption ID: %d is %d in %s\n", data[offset],
+			int(data[offset + 2]) << 8 | int(data[offset + 3]), powerConsumptionUnits[data[offset + 1] & 0x7])
+	}
+}
+
+func decodePage90(data []byte, dataLen int) {
+	for offset := 4; offset < dataLen; {
+		offset = decodeLogicalUnit(data[offset:], offset)
+	}
+}
+
+func decodeLogicalUnit(data []byte, offset int) int {
+	fmt.Printf("  Relative port identifier: %d\n", int(data[0]) << 8 | int(data[1]))
+	fmt.Printf("  Protocol: %s\n", protocolIndentifier[data[2] & 0xf])
+	protocolLen := int(data[6]) << 8 | int(data[7])
+	dumpMemory(data[8:], protocolLen, "    ")
+
+	return offset + protocolLen + 8
+}
+
+func decodePage91(data []byte, dataLen int) {
+	for offset := 4; offset < dataLen; {
+		offset = decodeProtocolSpecificPort(data[offset:], offset)
+	}
+}
+
+func decodeProtocolSpecificPort(data []byte, offset int) int {
+	fmt.Printf("  Relative port identifier: %d\n", int(data[0]) << 8 | int(data[1]))
+	fmt.Printf("  Protocol: %s\n", protocolIndentifier[data[2] & 0xf])
+	portLen := int(data[6]) << 8 | int(data[7])
+	dumpMemory(data[8:], portLen, "    ")
+	return offset + portLen + 8
 }
