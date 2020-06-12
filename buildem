@@ -4,5 +4,6 @@ for GOOS in darwin linux solaris; do
         env GOOS=$GOOS GOARCH=$GOARCH go build -v -o bin/fiod-$GOOS-$GOARCH rmcneal.com/fiod
         env GOOS=$GOOS GOARCH=$GOARCH go build -v -o bin/auto-fiod-$GOOS-$GOARCH auto-fiod
         env GOOS=$GOOS GOARCH=$GOARCH go build -v -o bin/hexdmp-$GOOS-$GOARCH rmcneal.com/hexdmp
+        env GOOS=$GOOS GOARCH=$GOARCH go build -v -o bin/uscsi-$GOOS-$GOARCH rmcneal.com/uscsi
     done
 done
