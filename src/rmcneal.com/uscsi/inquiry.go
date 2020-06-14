@@ -5,22 +5,8 @@ import (
 	"fmt"
 )
 
-type bitMaskBitDump struct {
-	byteOffset	byte
-	rightShift	uint8
-	mask		byte
-	name		string
-}
-
-type multiByteDump struct {
-	byteOffset	int
-	numberBytes	int
-	name		string
-}
-
 var pageCodeStrings map[byte]string
 var pageCodeFuncs map[byte]func([]byte, int)
-var protocolIndentifier map[byte]string
 var designatorType map[byte]string
 var NAAField map[byte]string
 var codeSet map[byte]string
@@ -124,31 +110,17 @@ func init() {
 	}
 
 	pageCodeFuncs = map[byte]func([]byte, int) {
-		0x00: decodePage00,
-		0x80: decodePage80,
-		0x83: decodePage83,
-		0x86: decodePage86,
-		0x87: decodePage87,
-		0x88: decodePage88,
-		0x89: decodePage89,
-		0x8a: decodePage8a,
-		0x8d: decodePage8d,
-		0x90: decodePage90,
-		0x91: decodePage91,
-	}
-
-	protocolIndentifier = map[byte]string {
-		0x0: "FCP-4",
-		0x1: "SPI-5",
-		0x2: "SSA-S3P",
-		0x3: "SBP-3",
-		0x4: "SRP",
-		0x5: "iSCSI",
-		0x6: "SPL-3",
-		0x7: "ADT-2",
-		0x8: "ACS-2",
-		0x9: "UAS-2",
-		0xa: "SOP",
+		0x00: decodeInquiryPage00,
+		0x80: decodeInquiryPage80,
+		0x83: decodeInquiryPage83,
+		0x86: decodeInquiryPage86,
+		0x87: decodeInquiryPage87,
+		0x88: decodeInquiryPage88,
+		0x89: decodeInquiryPage89,
+		0x8a: decodeInquiryPage8a,
+		0x8d: decodeInquriyPage8d,
+		0x90: decodeInquiryPage90,
+		0x91: decodeInquiryPage91,
 	}
 
 	designatorType = map[byte]string {
@@ -221,11 +193,11 @@ func init() {
 func scsiInquiryCommand(fp *os.File) {
 
 	evpd := byte(0)
-	if inquiryEVPD || inquiryPage != 0 {
+	if inquiryEVPD || pageRequest != 0 {
 		evpd = 1
 	}
 
-	if data, length, err := scsiInquiry(fp, evpd, byte(inquiryPage)); err == nil {
+	if data, length, err := scsiInquiry(fp, evpd, byte(pageRequest)); err == nil {
 		if debugOutput {
 			fmt.Printf("DataIn:\n")
 			for offset := 0; offset < length; offset += 16 {
@@ -235,7 +207,7 @@ func scsiInquiryCommand(fp *os.File) {
 		}
 
 		if evpd == 1 {
-			page := byte(inquiryPage)
+			page := byte(pageRequest)
 			if dataDecoder, ok := pageCodeFuncs[page]; ok {
 				fmt.Printf("%s\n", pageCodeStrings[page])
 				dataDecoder(data, length)
@@ -302,7 +274,7 @@ func decodeStandInquiry(data []byte, dataLen int) {
 	dumpMemory(data[36:], dataLen - 36, "    ")
 }
 
-func decodePage00(data []byte, dataLen int) {
+func decodeInquiryPage00(data []byte, dataLen int) {
 	var supportedPage string
 
 	fmt.Printf("%4s | %5s\n", "Page", "Title")
@@ -319,7 +291,7 @@ func decodePage00(data []byte, dataLen int) {
 	}
 }
 
-func decodePage80(data []byte, dataLen int) {
+func decodeInquiryPage80(data []byte, dataLen int) {
 	fmt.Printf("  Device type  : %s\n", deviceType[data[0] & 0x1f])
 	fmt.Printf("  Serial number: ")
 	for i := 4; i < dataLen; i++ {
@@ -328,15 +300,15 @@ func decodePage80(data []byte, dataLen int) {
 	fmt.Printf("\n")
 }
 
-func decodePage83(data []byte, unused int) {
+func decodeInquiryPage83(data []byte, unused int) {
 	count := 1
 	for offset := 4; offset < int(data[2] << 8 | data[3]); count++ {
 		fmt.Printf("  ---- Destriptor %d ----\n", count)
-		offset = designationDescDecode(data[offset:], offset)
+		offset += designationDescDecode(data[offset:])
 	}
 }
 
-func designationDescDecode(data []byte, offset int) int {
+func designationDescDecode(data []byte) int {
 	// Check to see if PIV bit is set.
 
 	if data[1] & 0x80 != 0 {
@@ -357,24 +329,18 @@ func designationDescDecode(data []byte, offset int) int {
 		fmt.Printf("    ---- Not Decoded yet (%d) ----\n", data[1] & 0xf)
 
 	case 1:
-		val := int64(0)
-		for i := 4; i < 12; i++ {
-			val = (val << 8) | int64(data[i])
-		}
+		converter := dataToInt{data, 4, 8}
+		val := converter.getInt64()
 		fmt.Printf("  T10 Vendor ID: 0x%x\n", val)
 
-		val = 0
-		for i := 8; i < int(data[3] + 3); i++ {
-			val = (val << 8) | int64(data[i])
-		}
+		converter.setOffsetCount(8, int(data[3] + 4))
+		val = converter.getInt64()
 		fmt.Printf("  IEEE Company ID: 0x%x\n", val)
 
 	case 3:
 		fmt.Printf("  %s\n    ", NAAField[data[4] >> 4])
-		val := int64(0)
-		for i := 4; i < 12; i++ {
-			val = (val << 8) | int64(data[i])
-		}
+		converter := dataToInt{data, 4, 8}
+		val := converter.getInt64()
 		fmt.Printf("[0x%x]\n", val)
 
 	case 4:
@@ -391,10 +357,10 @@ func designationDescDecode(data []byte, offset int) int {
 		fmt.Printf("  ---- Unexpected and impossible: %d\n", data[1] & 0xf)
 	}
 
-	return offset + int(data[3]) + 4
+	return int(data[3]) + 4
 }
 
-func decodePage86(data []byte, unused int) {
+func decodeInquiryPage86(data []byte, unused int) {
 	lineLength := 2
 	fmt.Printf("  ")
 	for _, bits := range extendInquiry {
@@ -409,21 +375,21 @@ func decodePage86(data []byte, unused int) {
 	fmt.Printf("\n  Self-test completion minutes=%d\n", data[10] << 8 | data[11])
 }
 
-func decodePage87(data []byte, dataLen int) {
+func decodeInquiryPage87(data []byte, dataLen int) {
 	for i := 4; i < dataLen; i += 4 {
 		fmt.Printf("  Policy page code: 0x%x, subpage code: 0x%x\n", data[i], data[i + 1])
 		fmt.Printf("    MLUS=%d, Policy: %s\n", data[i + 2] >> 7, modePagePolicy[data[i + 2] & 0x3])
 	}
 }
 
-func decodePage88(data []byte, dataLen int) {
+func decodeInquiryPage88(data []byte, dataLen int) {
 	fmt.Printf("  Page Length: %d\n", int(data[2]) << 8 | int(data[3]))
 	for offset := 4; offset < dataLen; {
-		offset = decodeSCSIPort(data[offset:], offset)
+		offset += decodeSCSIPort(data[offset:])
 	}
 }
 
-func decodeSCSIPort(data []byte, offset int) int {
+func decodeSCSIPort(data []byte) int {
 	fmt.Printf("  Relative Port Identifer: 0x%x\n", int(data[2]) << 8 | int(data[3]))
 
 	initiatorLength := int(data[6]) << 8 | int(data[7])
@@ -438,7 +404,7 @@ func decodeSCSIPort(data []byte, offset int) int {
 		targetOffset = decodeTargetPort(targetPortData, targetOffset)
 	}
 
-	return 8 + initiatorLength + 4 + targetPortLength + offset
+	return 8 + initiatorLength + 4 + targetPortLength
 }
 
 func decodeTargetPort(data []byte, offset int) int {
@@ -455,7 +421,7 @@ func decodeTargetPort(data []byte, offset int) int {
 	return offset + targetPortLength + 4
 }
 
-func decodePage89(data []byte, dataLen int) {
+func decodeInquiryPage89(data []byte, dataLen int) {
 	fmt.Printf("  Device type         : %s\n", deviceType[data[0] & 0x1f])
 	fmt.Printf("  SAT Vendor ID       : ")
 	for i := 8; i < 16; i++ {
@@ -488,7 +454,7 @@ func decodePage89(data []byte, dataLen int) {
 	dumpMemory(data[60:], dataLen- 60, "    ")
 }
 
-func decodePage8a(data []byte, unused int) {
+func decodeInquiryPage8a(data []byte, unused int) {
 	outputLength := 2
 	fmt.Printf("  ")
 	for _, bits := range powerConditionBits {
@@ -502,22 +468,20 @@ func decodePage8a(data []byte, unused int) {
 	}
 	fmt.Printf("\n")
 	for _, bytes := range powerConditionBytes {
-		val := 0
-		for i := 0; i < bytes.numberBytes; i++ {
-			val = (val << 8) | int(data[bytes.byteOffset + i])
-		}
+		converter := dataToInt{data, bytes.byteOffset, bytes.numberBytes}
+		val := converter.getInt64()
 		fmt.Printf("  %s: %d\n", bytes.name, val)
 	}
 }
 
-func decodePage8d(data []byte, dataLen int) {
+func decodeInquriyPage8d(data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; offset += 4 {
 		fmt.Printf("  Power consumption ID: %d is %d in %s\n", data[offset],
 			int(data[offset + 2]) << 8 | int(data[offset + 3]), powerConsumptionUnits[data[offset + 1] & 0x7])
 	}
 }
 
-func decodePage90(data []byte, dataLen int) {
+func decodeInquiryPage90(data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; {
 		offset = decodeLogicalUnit(data[offset:], offset)
 	}
@@ -532,7 +496,7 @@ func decodeLogicalUnit(data []byte, offset int) int {
 	return offset + protocolLen + 8
 }
 
-func decodePage91(data []byte, dataLen int) {
+func decodeInquiryPage91(data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; {
 		offset = decodeProtocolSpecificPort(data[offset:], offset)
 	}
