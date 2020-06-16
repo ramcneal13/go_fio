@@ -19,9 +19,7 @@ type statisticsFuncs struct {
 
 type tableArrayT map[byte]string
 
-var logsenseCodeFuncs map[byte]func(*os.File, []byte, int)
-var logsenseStrings map[byte]string
-var logsensePageCodes map[byte]string
+var logsenseCodeFuncs map[byte]logsenseNameAndFunc
 var logTemperatureStrings map[int]string
 var logParameterBits []bitMaskBitDump
 var overUnderParameterCode map[byte]string
@@ -32,47 +30,35 @@ var page19StatFuncs map[int]statisticsFuncs
 var nonMediumErrorCountCode map[byte]string
 var tableArray []tableArrayT
 
+type logsenseNameAndFunc struct {
+	name	string
+	decode	func(*os.File, []byte, int)
+}
+
 func init() {
-	logsenseCodeFuncs = map[byte]func(*os.File, []byte, int) {
-		0x00: decodeLogPage00,
-		0x01: decodeLogPageCommon,
-		0x02: decodeLogPageCommon,
-		0x03: decodeLogPageCommon,
-		0x04: decodeLogPageCommon,
-		0x05: decodeLogPageCommon,
-		0x06: decodeLogPageCommon,
-		0x0d: decodeLogPage0d,
-		0x0e: decodeLogPage0e,
-		0x0f: decodeLogPage0f,
-		0x10: decodeLogPage10,
-		0x18: decodeLogPage18,
-		0x19: decodeLogPage19,
-	}
-	logsensePageCodes = map[byte]string {
-		0x0f: "Application client",
-		0x01: "Buffer Over-Run/Under-Run",
-		0x19: "General statistics",
-		0x2f: "Informal Exceptions",
-		0x0b: "Last N Deferred Errors",
-		0x07: "Last N Error Events",
-		0x06: "Non-Medium Error",
-		0x1a: "Power Condition Transitions",
-		0x18: "Protocol Specific Port",
-		0x03: "Read Error Counters",
-		0x04: "Read Reverse Error Counters",
-		0x10: "Self-Test Results",
-		0x0e: "Start-Stop Cycle Counter",
-		0x00: "Supported Log Pages",
-		0x0d: "Temperature",
-		0x05: "Verify Error Counters",
-		0x02: "Write Error Counters",
-		0x11: "(restricted)",
-		0x12: "(restricted)",
-		0x13: "(restricted)",
-		0x14: "(restricted)",
-		0x15: "(restricted)",
-		0x16: "(restricted)",
-		0x17: "(restricted)",
+	logsenseCodeFuncs = map[byte]logsenseNameAndFunc {
+		0x00: {"Supported Log Pages", decodeLogPage00},
+		0x01: {"Buffer Over-Run/Under-Run", decodeLogPageCommon},
+		0x02: {"Write Error Counters", decodeLogPageCommon},
+		0x03: {"Read Error Counters", decodeLogPageCommon},
+		0x04: {"Read Reverse Error Counters", decodeLogPageCommon},
+		0x05: {"Verify Error Counters", decodeLogPageCommon},
+		0x06: {"Non-Medium Error", decodeLogPageCommon},
+		0x0d: {"Temperature",decodeLogPage0d},
+		0x0e: {"Start-Stop Cycle Counter",decodeLogPage0e},
+		0x0f: {"Application client",decodeLogPage0f},
+		0x10: {"Self-Test Results",decodeLogPage10},
+		0x11: {"Solid State Media",decodeLogPage11},
+		0x12: {"(restricted)", showAsRestricted},
+		0x13: {"(restricted)",showAsRestricted},
+		0x14: {"(restricted)",showAsRestricted},
+		0x15: {"Background Scan Results",decodeLogPage15},
+		0x16: {"ATA PASS-THROUGH",showAsRestricted},
+		0x17: {"(restricted)",showAsRestricted},
+		0x18: {"Protocol Specific Port",decodeLogPage18},
+		0x19: {"General statistics",decodeLogPage19},
+		0x1a: {"Power Condition Transitions",decodeLogPage1a},
+		0x2f: {"Informal Exceptions",decodeLogPage2f},
 	}
 	logTemperatureStrings = map[int]string {
 		0x0000: "Temperature",
@@ -161,12 +147,26 @@ func scsiLogSenseCommand(fp *os.File) {
 			}
 		}
 
-		page := byte(pageRequest)
-		if dataDecoder, ok := logsenseCodeFuncs[page]; ok {
-			fmt.Printf("%s\n", logsensePageCodes[page])
-			dataDecoder(fp, data, length)
+		if showAll {
+			for index := 4; index < length; index++ {
+				if pageData, pageLength, pageError := scsiLogSense(fp, data[byte(index)], 0); pageError == nil {
+					if naf, ok := logsenseCodeFuncs[data[byte(index)]]; ok {
+						fmt.Printf("Page 0x%x: %s\n", data[byte(index)], naf.name)
+						naf.decode(fp, pageData, pageLength)
+						fmt.Printf("\n")
+					} else {
+						fmt.Printf("Page 0x%x not supported (yet)\n", data[byte(index)])
+					}
+				}
+			}
 		} else {
-			fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+			page := byte(pageRequest)
+			if naf, ok := logsenseCodeFuncs[page]; ok {
+				fmt.Printf("%s\n", naf.name)
+				naf.decode(fp, data, length)
+			} else {
+				fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+			}
 		}
 
 	} else {
@@ -195,25 +195,28 @@ func scsiLogSense(fp *os.File, page byte, subpage byte) ([]byte, int, error) {
 	return data, dataLen, err
 }
 
+func showAsRestricted(fp *os.File, data []byte, dataLen int) {
+	fmt.Printf("    Restricted (see applicable protocol standard)\n")
+}
+
 func decodeLogPage00(fp *os.File, data []byte, dataLen int) {
 	var name string
-	var ok bool
 
 	longest := 0
 	for index := 4; index < dataLen; index++ {
-		str := fmt.Sprintf("%s", logsensePageCodes[data[index]])
+		str := fmt.Sprintf("%s", logsenseCodeFuncs[data[index]].name)
 		longest = max(len(str), longest)
 	}
 	longest += 1
-	fmt.Printf("  Num   %-*s Sub Pages Available\n", longest, "Name")
-	fmt.Printf("%s\n", support.DashLine(6, longest + 1, 19))
+	fmt.Printf("    Num    %-*s  Sub Pages\n", longest, "Name")
+	fmt.Printf("  %s\n", support.DashLine(6, longest + 1, 19))
 	for index := 4; index < dataLen; index++ {
-		if name, ok = logsensePageCodes[data[index]]; ok {
-			name = logsensePageCodes[data[index]]
+		if naf, ok := logsenseCodeFuncs[data[index]]; ok {
+			name = naf.name
 		} else {
-			name = "(Reserved)"
+			name = "Unsupported"
 		}
-		fmt.Printf("  0x%02x | %-*s", data[index], longest, name)
+		fmt.Printf("  |  %02x  | %-*s", data[index], longest, name)
 		if data[index] == 0 {
 			fmt.Printf("|\n")
 			continue
@@ -320,7 +323,11 @@ func commonStartStopDataDecode(data []byte) string {
 
 func decodeLogPage0f(fp *os.File, data []byte, dataLen int) {
 	dumpParameterBits(data)
-	dumpMemory(data[4:], dataLen - 4, "  ")
+	if dataLen > 64 {
+		dataLen = 68
+		fmt.Printf("  Only showing first 64 bytes out of %d available\n", dataLen)
+	}
+	dumpMemory(data[4:], dataLen - 4, "    ")
 }
 
 func decodeLogPage10(fp *os.File, data []byte, dataLen int) {
@@ -360,6 +367,55 @@ func decodeTestResults(data []byte) bool {
 	fmt.Printf("  ASC: %d, ASCQ: %d\n", data[17], data[18])
 
 	return true
+}
+
+func decodeLogPage11(fp *os.File, data []byte, dataLen int) {
+	if dataLen != int(data[3]) + 4 {
+		fmt.Printf("  Invalid parameter length\n")
+	}
+	fmt.Printf("  Percentage used endurance indicator: %d%%\n", data[7])
+}
+
+type backgroundScan struct {
+	name	string
+	decode	func([]byte, int) int
+}
+
+func decodeLogPage15(fp *os.File, data []byte, dataLen int) {
+	backgroundDecode := map[int]backgroundScan {
+		0x00: {"Background Scan Status", decodeBackgroundScan},
+		0x01: {"Background Scan Results", decodeBackgroundResults},
+	}
+	for offset := 4; offset < dataLen; {
+		convert := dataToInt{data, offset, 2}
+		pc := convert.getInt()
+		if bd, ok := backgroundDecode[pc]; ok {
+			fmt.Printf("  %s\n", bd.name)
+			offset += bd.decode(data[offset:], dataLen - offset)
+		}
+	}
+}
+
+func decodeBackgroundScan(data []byte, dataLen int) int {
+	converter := dataToInt{data,4, 4}
+	fmt.Printf("    Accumulated power on minutes: %d\n", converter.getInt64())
+	fmt.Printf("    Scan status: %d\n", data[9])
+
+	converter.setOffsetCount(10,2)
+	fmt.Printf("    Number of scans performed: %d\n", converter.getInt())
+
+	converter.setOffsetCount(12,2)
+	fmt.Printf("    Scan progress: %d%%\n", converter.getInt())
+
+	converter.setOffsetCount(14,2)
+	fmt.Printf("    Number of medium scans performed: %d\n", converter.getInt())
+
+	return int(data[3]) + 4
+}
+
+func decodeBackgroundResults(data []byte, dataLen int) int {
+	dumpMemory(data, dataLen, "    ")
+	return int(data[3]) + 4
 }
 
 func decodeLogPage18(fp *os.File, data []byte, dataLen int) {
@@ -419,4 +475,12 @@ func statsPage3(data []byte) int {
 
 func statsPage4(data []byte) int {
 	return int(data[3] + 4)
+}
+
+func decodeLogPage1a(fp *os.File, data []byte, dataLen int) {
+
+}
+
+func decodeLogPage2f(fp *os.File, data []byte, dataLen int) {
+
 }

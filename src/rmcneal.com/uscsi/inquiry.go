@@ -3,10 +3,15 @@ package main
 import (
 	"os"
 	"fmt"
+	"rmcneal.com/support"
 )
 
-var pageCodeStrings map[byte]string
-var pageCodeFuncs map[byte]func([]byte, int)
+type inquiryNameAndFunc struct {
+	name	string
+	decode	func([]byte, int)
+}
+
+var pageCodeFuncs map[byte]inquiryNameAndFunc
 var designatorType map[byte]string
 var NAAField map[byte]string
 var codeSet map[byte]string
@@ -18,6 +23,7 @@ var powerConditionBits []bitMaskBitDump
 var powerConditionBytes []multiByteDump
 var powerConsumptionUnits map[byte]string
 var standardInquiryBits []bitMaskBitDump
+var blockLimitsBytes []multiByteDump
 
 func init() {
 	extendInquiry = []bitMaskBitDump{
@@ -90,37 +96,23 @@ func init() {
 		{56,1,1,"IUS"},
 	}
 
-	pageCodeStrings = map[byte]string{
-		0x89: "ASCII Information",
-		0x8c: "CFA Profile Information",
-		0x8b: "Device Constituents",
-		0x83: "Device Identification",
-		0x86: "Extended INQUIRY Data",
-		0x85: "Management Network Addresses",
-		0x87: "Mode Page Policy",
-		0x8a: "Power Condition",
-		0x8d: "Power Consumption",
-		0x90: "Protocol Specific Logical Unit Information",
-		0x91: "Protocol Specific Port Information",
-		0x88: "SCSI Ports",
-		0x84: "Software Interface Identification",
-		0x00: "Supported VPD Pages",
-		0x8f: "Third Part Copy",
-		0x80: "Unit Serial Number",
-	}
-
-	pageCodeFuncs = map[byte]func([]byte, int) {
-		0x00: decodeInquiryPage00,
-		0x80: decodeInquiryPage80,
-		0x83: decodeInquiryPage83,
-		0x86: decodeInquiryPage86,
-		0x87: decodeInquiryPage87,
-		0x88: decodeInquiryPage88,
-		0x89: decodeInquiryPage89,
-		0x8a: decodeInquiryPage8a,
-		0x8d: decodeInquriyPage8d,
-		0x90: decodeInquiryPage90,
-		0x91: decodeInquiryPage91,
+	pageCodeFuncs = map[byte]inquiryNameAndFunc {
+		0x00: {"Supported VPD Pages",decodeInquiryPage00},
+		0x80: {"Unit Serial Number",decodeInquiryPage80},
+		0x83: {"Device Identification",decodeInquiryPage83},
+		0x86: {"Extended INQUIRY Data",decodeInquiryPage86},
+		0x87: {"Mode Page Policy",decodeInquiryPage87},
+		0x88: {"SCSI Ports",decodeInquiryPage88},
+		0x89: {"ASCII Information",decodeInquiryPage89},
+		0x8a: {"Power Condition",decodeInquiryPage8a},
+		0x8d: {"Power Consumption",decodeInquriyPage8d},
+		0x90: {"Protocol Specific Logical Unit Information",decodeInquiryPage90},
+		0x91: {"Protocol Specific Port Information",decodeInquiryPage91},
+		0xb0: {"Block Limits",decodeInquiryPageb0},
+		0xb1: {"Block Device Characteristics", nil},
+		0xb2: {"Logical Block Provisioning", nil},
+		0xb7: {"Unknown page", nil},
+		0xcd: {"Unknown page", nil},
 	}
 
 	designatorType = map[byte]string {
@@ -188,12 +180,24 @@ func init() {
 		0x04: "Milliwatts",
 		0x05: "Microwatts",
 	}
+
+	blockLimitsBytes = []multiByteDump {
+		{5,1,"Maxiumum compare and write length"},
+		{6,2,"Optimal transfer length granularity"},
+		{8,4,"Maxiumum transfer length"},
+		{12,4,"Optimal transfer length"},
+		{16,4,"Maximum prefetch length"},
+		{20,4,"Maximum unmap LBA count"},
+		{24,4,"Maximum unmap block descriptor count"},
+		{28,4,"Optimal unmap granularity"},
+		{36,8,"Maximum write same langth"},
+	}
 }
 
 func scsiInquiryCommand(fp *os.File) {
 
 	evpd := byte(0)
-	if inquiryEVPD || pageRequest != 0 {
+	if inquiryEVPD || pageRequest != 0 || showAll {
 		evpd = 1
 	}
 
@@ -206,16 +210,34 @@ func scsiInquiryCommand(fp *os.File) {
 			}
 		}
 
-		if evpd == 1 {
-			page := byte(pageRequest)
-			if dataDecoder, ok := pageCodeFuncs[page]; ok {
-				fmt.Printf("%s\n", pageCodeStrings[page])
-				dataDecoder(data, length)
-			} else {
-				fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+		if showAll {
+			for index := 4; index < length; index++ {
+				if pageData, pageLength, pageErr := scsiInquiry(fp, evpd, data[byte(index)]); pageErr == nil {
+					if naf, ok := pageCodeFuncs[data[byte(index)]]; ok {
+						fmt.Printf("Page 0x%x: %s\n", data[byte(index)], naf.name)
+						if naf.decode != nil {
+							naf.decode(pageData, pageLength)
+						}
+						fmt.Printf("\n")
+					} else {
+						fmt.Printf("Failed to find decode function for page 0x%x\n", data[byte(index)])
+					}
+				}
 			}
 		} else {
-			decodeStandInquiry(data, length)
+			if evpd == 1 {
+				page := byte(pageRequest)
+				if naf, ok := pageCodeFuncs[page]; ok {
+					fmt.Printf("%s\n", naf.name)
+					if naf.decode != nil {
+						naf.decode(data, length)
+					}
+				} else {
+					fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+				}
+			} else {
+				decodeStandInquiry(data, length)
+			}
 		}
 
 	} else {
@@ -276,18 +298,27 @@ func decodeStandInquiry(data []byte, dataLen int) {
 
 func decodeInquiryPage00(data []byte, dataLen int) {
 	var supportedPage string
+	var naf inquiryNameAndFunc
+	var ok bool
 
-	fmt.Printf("%4s | %5s\n", "Page", "Title")
-	fmt.Printf("-----+--------------------------\n")
-	for index := 4; index < dataLen; index += 1 {
-		if cmdTitle, ok := pageCodeStrings[data[index]]; ok {
-			if _, ok := pageCodeFuncs[data[index]]; ok {
-				supportedPage = ""
-			} else {
-				supportedPage = "(not yet supported)"
-			}
-			fmt.Printf("  %02x | %s %s\n", data[index], cmdTitle, supportedPage)
+	longestTitle := 0
+	for index := 4; index < dataLen; index++ {
+		if naf, ok := pageCodeFuncs[data[index]]; ok {
+			longestTitle = max(longestTitle, len(naf.name))
 		}
+	}
+	supportedTitle := "Supported"
+	fmt.Printf("    %4s | %-*s | %s\n", "Page", longestTitle, "Title", supportedTitle)
+	fmt.Printf("  %s\n", support.DashLine(6, longestTitle + 2, len(supportedTitle) + 2))
+	for index := 4; index < dataLen; index += 1 {
+		if naf, ok = pageCodeFuncs[data[index]]; ok {
+			if naf.decode == nil {
+				supportedPage = "(not yet)"
+			} else {
+				supportedPage = ""
+			}
+		}
+		fmt.Printf("  |  %02x  | %-*s | %s\n", data[index], longestTitle, naf.name, supportedPage)
 	}
 }
 
@@ -508,4 +539,16 @@ func decodeProtocolSpecificPort(data []byte, offset int) int {
 	portLen := int(data[6]) << 8 | int(data[7])
 	dumpMemory(data[8:], portLen, "    ")
 	return offset + portLen + 8
+}
+
+func decodeInquiryPageb0(data []byte, dataLen int) {
+	converter := dataToInt{data, 2, 2}
+	if dataLen != converter.getInt() + 4 {
+		fmt.Printf("  Invalid data count returned (%d) verses page length (%d)\n",
+			dataLen - 4, converter.getInt())
+	}
+	for _, blb := range blockLimitsBytes {
+		converter := dataToInt{data,blb.byteOffset,blb.numberBytes}
+		fmt.Printf("    %s: %d\n", blb.name, converter.getInt64())
+	}
 }

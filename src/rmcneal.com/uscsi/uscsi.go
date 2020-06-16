@@ -27,6 +27,7 @@ var debugOutput bool
 var commandName string
 var scsiCommands map[string]func(*os.File)
 var protocolIndentifier map[byte]string
+var showAll bool
 
 func init() {
 	const (
@@ -48,6 +49,7 @@ func init() {
 	flag.BoolVar(&debugOutput, "D", false, usageDebug+" (shorthand)")
 	flag.StringVar(&commandName, "command", "", usageCommand)
 	flag.StringVar(&commandName, "C", "", usageCommand+" (shorthand)")
+	flag.BoolVar(&showAll, "all", false, "show all pages")
 
 	scsiCommands = map[string]func(*os.File){
 		"inquiry":  scsiInquiryCommand,
@@ -81,6 +83,12 @@ func main() {
 	progName := os.Args[0][lastIndex:]
 
 	flag.Parse()
+
+	if showAll && pageRequest != 0 {
+		fmt.Printf("%s: using --all and setting a page number are not compatible\n")
+		os.Exit(1)
+	}
+
 	fp, err = os.Open(inputDevice)
 	if err != nil {
 		fmt.Printf("%s\n", err)
