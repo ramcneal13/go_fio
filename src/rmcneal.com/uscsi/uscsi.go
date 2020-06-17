@@ -87,7 +87,7 @@ func main() {
 	flag.Parse()
 
 	if showAll && pageRequest != 0 {
-		fmt.Printf("%s: using --all and setting a page number are not compatible\n")
+		fmt.Printf("%s: using --all and setting a page number are not compatible\n", progName)
 		os.Exit(1)
 	}
 
@@ -114,8 +114,8 @@ func main() {
 	}
 }
 
-func hexDump(buf []byte, n int, offset int64, offset_width int) {
-	fmt.Printf("%0*x: ", offset_width, offset)
+func hexDump(buf []byte, n int, offset int64, offsetWidth int) {
+	fmt.Printf("%0*x: ", offsetWidth, offset)
 	for byteIndex := 0; byteIndex < n; byteIndex += 1 {
 		fmt.Printf("%02x ", buf[byteIndex])
 	}
@@ -145,8 +145,8 @@ func dumpMemory(buf []byte, n int, prefix string) {
 	}
 }
 
-func dumpLine(buf []byte, n int, offset int64, offset_width int) {
-	hexDump(buf, n, offset, offset_width)
+func dumpLine(buf []byte, n int, offset int64, offsetWidth int) {
+	hexDump(buf, n, offset, offsetWidth)
 	asciiDump(buf, n)
 	fmt.Printf("\n")
 }

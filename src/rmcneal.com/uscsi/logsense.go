@@ -205,6 +205,7 @@ func scsiLogSense(fp *os.File, page byte, subpage byte) ([]byte, int, error) {
 	return data, dataLen, err
 }
 
+//noinspection GoUnusedParameter
 func showAsRestricted(fp *os.File, data []byte, dataLen int) {
 	fmt.Printf("    Restricted (see applicable protocol standard)\n")
 }
@@ -263,9 +264,10 @@ func dumpParameterBits(data []byte) {
 
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPageCommon(fp *os.File, data []byte, dataLen int) {
 	pageCode := data[0] & 0x3f
-	table := tableArray[pageCode];
+	table := tableArray[pageCode]
 	decodeParameterLoop(data, dataLen, table)
 }
 
@@ -292,6 +294,7 @@ func decodeParameterCode(data []byte, table map[byte]string, longestName int) in
 	return int(data[3]) + 4
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage0d(fp *os.File, data []byte, dataLen int) {
 	for index := 4; index < dataLen; index += 6 {
 		code := int(data[index]) << 8 | int(data[index + 1])
@@ -300,6 +303,7 @@ func decodeLogPage0d(fp *os.File, data []byte, dataLen int) {
 	}
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage0e(fp *os.File, data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; {
 		parameterCode := data[offset + 1]
@@ -331,6 +335,7 @@ func commonStartStopDataDecode(data []byte) string {
 	return fmt.Sprintf("%d", val)
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage0f(fp *os.File, data []byte, dataLen int) {
 	dumpParameterBits(data)
 	if dataLen > 64 {
@@ -340,6 +345,7 @@ func decodeLogPage0f(fp *os.File, data []byte, dataLen int) {
 	dumpMemory(data[4:], dataLen - 4, "    ")
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage10(fp *os.File, data []byte, dataLen int) {
 	pageLength := int(data[2]) << 8 | int(data[3])
 	if pageLength != 0x190 {
@@ -379,6 +385,7 @@ func decodeTestResults(data []byte) bool {
 	return true
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage11(fp *os.File, data []byte, dataLen int) {
 	if dataLen != int(data[3]) + 4 {
 		fmt.Printf("  Invalid parameter length\n")
@@ -391,6 +398,7 @@ type backgroundScan struct {
 	decode	func([]byte, int) int
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage15(fp *os.File, data []byte, dataLen int) {
 	backgroundDecode := map[int]backgroundScan {
 		0x00: {"Background Scan Status", decodeBackgroundScan},
@@ -406,6 +414,7 @@ func decodeLogPage15(fp *os.File, data []byte, dataLen int) {
 	}
 }
 
+//noinspection GoUnusedParameter
 func decodeBackgroundScan(data []byte, dataLen int) int {
 	converter := dataToInt{data,4, 4}
 	fmt.Printf("    Accumulated power on minutes: %d\n", converter.getInt64())
@@ -428,6 +437,7 @@ func decodeBackgroundResults(data []byte, dataLen int) int {
 	return int(data[3]) + 4
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage18(fp *os.File, data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; {
 		offset += decodePortLog(data[offset:])
@@ -442,6 +452,7 @@ func decodePortLog(data []byte) int {
 	return paramLen + 4
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage19(fp *os.File, data []byte, dataLen int) {
 	for offset :=4; offset < dataLen; {
 		converter := dataToInt{data, offset, 2}
@@ -487,10 +498,12 @@ func statsPage4(data []byte) int {
 	return int(data[3] + 4)
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage1a(fp *os.File, data []byte, dataLen int) {
 
 }
 
+//noinspection GoUnusedParameter
 func decodeLogPage2f(fp *os.File, data []byte, dataLen int) {
 
 }

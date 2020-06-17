@@ -343,6 +343,7 @@ func decodeInquiryPage80(data []byte, dataLen int) {
 	fmt.Printf("\n")
 }
 
+//noinspection GoUnusedParameter
 func decodeInquiryPage83(data []byte, unused int) {
 	count := 1
 	for offset := 4; offset < int(data[2] << 8 | data[3]); count++ {
@@ -403,6 +404,7 @@ func designationDescDecode(data []byte) int {
 	return int(data[3]) + 4
 }
 
+//noinspection GoUnusedParameter
 func decodeInquiryPage86(data []byte, unused int) {
 	lineLength := 2
 	fmt.Printf("  ")
@@ -497,6 +499,7 @@ func decodeInquiryPage89(data []byte, dataLen int) {
 	dumpMemory(data[60:], dataLen- 60, "    ")
 }
 
+//noinspection GoUnusedParameter
 func decodeInquiryPage8a(data []byte, unused int) {
 	outputLength := 2
 	fmt.Printf("  ")
@@ -510,10 +513,10 @@ func decodeInquiryPage8a(data []byte, unused int) {
 		fmt.Printf("%s ", str)
 	}
 	fmt.Printf("\n")
-	for _, bytes := range powerConditionBytes {
-		converter := dataToInt{data, bytes.byteOffset, bytes.numberBytes}
+	for _, pcBytes := range powerConditionBytes {
+		converter := dataToInt{data, pcBytes.byteOffset, pcBytes.numberBytes}
 		val := converter.getInt64()
-		fmt.Printf("  %s: %d\n", bytes.name, val)
+		fmt.Printf("  %s: %d\n", pcBytes.name, val)
 	}
 }
 
