@@ -13,6 +13,7 @@ type yesNo bool
 type diskInfoData struct {
 	name         string
 	isSSD        yesNo
+	wearValue    int
 	capacity     int64
 	pathToDevice string
 	vendor       string
@@ -29,9 +30,11 @@ type processName struct {
 }
 
 var noPostProcessing bool
+var threadsToRun int
 
 func init() {
 	flag.BoolVar(&noPostProcessing, "raw",false,"Don't post process output")
+	flag.IntVar(&threadsToRun, "threads", 10, "Number of threads to use")
 }
 
 func (b yesNo) String() string {
@@ -57,6 +60,13 @@ func diskInfo(fp *os.File) {
 			}
 		}
 	}
+
+	/*
+	 * The noPostProcessing flag is just to see how much using threads helped
+	 * or hurt. On a system with about 75 drives this diskinfo takes 1.4 seconds
+	 * when using the go routines and 2 seconds for straight processing of each
+	 * drive. The installed 'diskinfo' command takes a whomping 4+ seconds.
+	 */
 	if noPostProcessing {
 		for _, name := range diskList {
 			d := gatherData(name)
@@ -73,7 +83,6 @@ func diskInfo(fp *os.File) {
 func runPostProcessing(diskList []string) {
 	var processedList []diskInfoData
 
-	threadsToRun := 10
 	workerList := make([]*processName, threadsToRun)
 	response := make(chan diskInfoData, 10)
 
@@ -106,12 +115,16 @@ func runPostProcessing(diskList []string) {
 	for _, r := range processedList {
 		maxDeviceName = max(maxDeviceName, len(r.name))
 	}
-	fmt.Printf("  %-*s   %-*s   %-*s   %-*s   SSD\n", maxDeviceName, "Device Name",
+	fmt.Printf("  %-*s   %-*s   %-*s   %-*s   SSD (wear)\n", maxDeviceName, "Device Name",
 		8, "Vendor", 16, "Product ID", 6, "Size")
-	fmt.Printf("%s\n", support.DashLine(maxDeviceName+2, 8+2, 16+2, 6+2, 3+2))
+	fmt.Printf("%s\n", support.DashLine(maxDeviceName+2, 8+2, 16+2, 6+2, 10+2))
 	for _, r := range processedList {
-		fmt.Printf("| %-*s | %s | %s | %6s | %s\n", maxDeviceName, r.name, r.vendor, r.productID,
+		fmt.Printf("| %-*s | %s | %s | %6s | %s", maxDeviceName, r.name, r.vendor, r.productID,
 			support.Humanize(r.capacity, 1), r.isSSD)
+		if r.isSSD {
+			fmt.Printf(" (%d%%)", r.wearValue)
+		}
+		fmt.Printf("\n")
 	}
 }
 
@@ -125,7 +138,7 @@ func (p *processName) Run() {
 }
 
 func gatherData(name string) diskInfoData {
-	reply := diskInfoData{name, false, 0, "/dev/rdsk/" + name,
+	reply := diskInfoData{name, false, 0, 0,"/dev/rdsk/" + name,
 		"", "", "",nil, nil}
 
 	if fp, err := os.Open("/dev/rdsk/" + name); err == nil {

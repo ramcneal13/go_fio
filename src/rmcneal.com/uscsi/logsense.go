@@ -141,6 +141,9 @@ func diskinfoLogSense(d *diskInfoData) {
 		for index := 4; index < length; index++ {
 			if data[index] == 0x11 {
 				d.isSSD = true
+				if data, _, err := scsiLogSense(d.fp, 0x11, 0); err == nil {
+					d.wearValue = int(data[7])
+				}
 			}
 		}
 	}
