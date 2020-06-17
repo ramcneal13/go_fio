@@ -606,6 +606,7 @@ var pageB1NominalType = map[byte]string {
 	0x05: "Less than 1.8 inch",
 }
 
+//noinspection GoUnusedParameter
 func decodeInquiryPageb1(data []byte, dataLen int) {
 	fmt.Printf("  Rotation rate: ")
 	converter := dataToInt{data, 4,2}
@@ -615,7 +616,7 @@ func decodeInquiryPageb1(data []byte, dataLen int) {
 	} else if rotationRate == 1 {
 		fmt.Printf("Solid State\n")
 	} else {
-		fmt.Printf("%d RPM\n")
+		fmt.Printf("%d RPM\n", rotationRate)
 	}
 	fmt.Printf("  Product type: %s\n", pageB1ProductType[data[6]])
 	fmt.Printf("  Nominal Form Factor: %s\n", pageB1NominalType[data[7] & 0xf])
