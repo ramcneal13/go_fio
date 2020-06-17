@@ -31,7 +31,6 @@ var showAll bool
 
 func init() {
 	const (
-		defaultDevice= "/dev/null"
 		usage= "device to use"
 		defaultPage= 0
 		usagePage= "page to return"
@@ -39,8 +38,8 @@ func init() {
 		usageDebug= "Dump out raw data"
 		usageCommand= "Direct selection of command to run"
 	)
-	flag.StringVar(&inputDevice, "device", defaultDevice, usage)
-	flag.StringVar(&inputDevice, "d", defaultDevice, usage+" (shorthand)")
+	flag.StringVar(&inputDevice, "device", "", usage)
+	flag.StringVar(&inputDevice, "d", "", usage+" (shorthand)")
 	flag.IntVar(&pageRequest, "page", defaultPage, usagePage)
 	flag.IntVar(&pageRequest, "p", defaultPage, usagePage+" (shorthand)")
 	flag.BoolVar(&inquiryEVPD, "evpd", false, usageEVPD)
@@ -91,10 +90,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	if inputDevice == "" {
+		inputDevice = flag.Arg(0)
+	}
+
 	fp, err = os.Open(inputDevice)
 	if err != nil {
-		fmt.Printf("%s\n", err)
-		os.Exit(1)
+		/*
+		 * See if the user just gave us the last component part of the device name.
+		 */
+		 if fp, err = os.Open("/dev/rdsk/"+inputDevice); err == nil {
+		 	inputDevice = "/dev/rdsk/"+inputDevice
+		 } else {
+			 fmt.Printf("%s\n", err)
+			 os.Exit(1)
+		 }
 	}
 
 	defer fp.Close()
