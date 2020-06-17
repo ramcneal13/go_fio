@@ -8,35 +8,26 @@ import (
 )
 
 type startStopDecode struct {
-	name	string
-	process	func([]byte) string
+	name    string
+	process func([]byte) string
 }
 
 type statisticsFuncs struct {
-	name	string
-	process	func([]byte) int
+	name    string
+	process func([]byte) int
 }
 
 type tableArrayT map[byte]string
 
 var logsenseCodeFuncs map[byte]logsenseNameAndFunc
-var logTemperatureStrings map[int]string
-var logParameterBits []bitMaskBitDump
-var overUnderParameterCode map[byte]string
-var rwErrorParameterCode map[byte]string
-var startStopFuncs map[byte]startStopDecode
-var generalStatsBytes []multiByteDump
-var page19StatFuncs map[int]statisticsFuncs
-var nonMediumErrorCountCode map[byte]string
-var tableArray []tableArrayT
 
 type logsenseNameAndFunc struct {
-	name	string
-	decode	func(*os.File, []byte, int)
+	name   string
+	decode func(*os.File, []byte, int)
 }
 
 func init() {
-	logsenseCodeFuncs = map[byte]logsenseNameAndFunc {
+	logsenseCodeFuncs = map[byte]logsenseNameAndFunc{
 		0x00: {"Supported Log Pages", decodeLogPage00},
 		0x01: {"Buffer Over-Run/Under-Run", decodeLogPageCommon},
 		0x02: {"Write Error Counters", decodeLogPageCommon},
@@ -44,97 +35,99 @@ func init() {
 		0x04: {"Read Reverse Error Counters", decodeLogPageCommon},
 		0x05: {"Verify Error Counters", decodeLogPageCommon},
 		0x06: {"Non-Medium Error", decodeLogPageCommon},
-		0x0d: {"Temperature",decodeLogPage0d},
-		0x0e: {"Start-Stop Cycle Counter",decodeLogPage0e},
-		0x0f: {"Application client",decodeLogPage0f},
-		0x10: {"Self-Test Results",decodeLogPage10},
-		0x11: {"Solid State Media",decodeLogPage11},
+		0x0d: {"Temperature", decodeLogPage0d},
+		0x0e: {"Start-Stop Cycle Counter", decodeLogPage0e},
+		0x0f: {"Application client", decodeLogPage0f},
+		0x10: {"Self-Test Results", decodeLogPage10},
+		0x11: {"Solid State Media", decodeLogPage11},
 		0x12: {"(restricted)", showAsRestricted},
-		0x13: {"(restricted)",showAsRestricted},
-		0x14: {"(restricted)",showAsRestricted},
-		0x15: {"Background Scan Results",decodeLogPage15},
-		0x16: {"ATA PASS-THROUGH",showAsRestricted},
-		0x17: {"(restricted)",showAsRestricted},
-		0x18: {"Protocol Specific Port",decodeLogPage18},
-		0x19: {"General statistics",decodeLogPage19},
-		0x1a: {"Power Condition Transitions",decodeLogPage1a},
-		0x2f: {"Informal Exceptions",decodeLogPage2f},
-	}
-	logTemperatureStrings = map[int]string {
-		0x0000: "Temperature",
-		0x0001: "Reference Temperature",
-	}
-	logParameterBits = []bitMaskBitDump {
-		{2,7,1,"DU"},
-		{2,5,1,"TSD"},
-		{2,4,1,"ETC"},
-		{2,2,3,"TMC"},
-		{2,0,3,"Format_and_linking"},
-	}
-	overUnderParameterCode = map[byte]string {
-		0x00: "under-run (undefined)",
-		0x01: "over-run (undefined)",
-		0x20: "Command under-run",
-		0x21: "Command over-run",
-		0x40: "I_T Nexus under-run",
-		0x41: "I_T Nexus over-run",
-		0x80: "Unit of time under-run",
-		0x81: "Unit of time over-run",
-		0x02: "under-run (undefined) service delivery",
-		0x03: "over-run (undefined) service delivery",
-		0x22: "Command under-run; service delivery",
-		0x23: "Command over-run; service delivery",
-		0x42: "I_T Nexus under-run; service delivery",
-		0x43: "I_T Nexus over-run; service delivery",
-		0x82: "Unit of time under-run; service delivery",
-		0x83: "Unit of time over-run; service delivery",
-	}
-	rwErrorParameterCode = map[byte]string {
-		0x00: "Errors corrected w/o delay",
-		0x01: "Errors corrected with delay",
-		0x02: "Total rewrites or rereads",
-		0x03: "Total errors corrected",
-		0x04: "Total correction algorithm processed",
-		0x05: "Total bytes processed",
-		0x06: "Total uncorrected errors",
-	}
-	nonMediumErrorCountCode = map[byte]string {
-		0x00: "Non-Medium Error Count",
-	}
-	startStopFuncs = map[byte]startStopDecode{
-		0x01: {"Date of Manufacture", domDecode},
-		0x02: {"Accounting Date",domDecode}, // Uses the same format as Date-of-Manufacture
-		0x03: {"Specified Cycle Count Over Device Lifetime", commonStartStopDataDecode},
-		0x04: {"Accumulated Start-Stop Cycles", commonStartStopDataDecode},
-		0x05: {"Specified Load-Unload Count Over Lifetime", commonStartStopDataDecode},
-		0x06: {"Accumulated Load-Unload Cycles", commonStartStopDataDecode},
-	}
-	generalStatsBytes = []multiByteDump {
-		{4,8,"Read commands"},
-		{12,8,"Write commands"},
-		{20,8,"Logical blocks received"},
-		{28,8,"Logical blocks transmitted"},
-		{36,8,"Read command processing intervals"},
-		{44,8,"Write command processing intervals"},
-		{52,8,"Weighted number of read commands plus write"},
-		{60,8,"Weighted read command processing plus write"},
-	}
-	page19StatFuncs = map[int]statisticsFuncs {
-		0x01: {"General Access Statistics and Performance", statsPage1 },
-		0x02: {"Idle Time",statsPage2 },
-		0x03: {"Time Interval", statsPage3 },
-		0x04: {"Force Unit Access Statistics and Performance", statsPage4 },
-	}
-	tableArray = []tableArrayT {
-		overUnderParameterCode,
-		rwErrorParameterCode,
-		rwErrorParameterCode,
-		rwErrorParameterCode,
-		rwErrorParameterCode,
-		rwErrorParameterCode,
-		nonMediumErrorCountCode,
+		0x13: {"(restricted)", showAsRestricted},
+		0x14: {"(restricted)", showAsRestricted},
+		0x15: {"Background Scan Results", decodeLogPage15},
+		0x16: {"ATA PASS-THROUGH", showAsRestricted},
+		0x17: {"(restricted)", showAsRestricted},
+		0x18: {"Protocol Specific Port", decodeLogPage18},
+		0x19: {"General statistics", decodeLogPage19},
+		0x1a: {"Power Condition Transitions", decodeLogPage1a},
+		0x2f: {"Informal Exceptions", decodeLogPage2f},
 	}
 }
+
+var logTemperatureStrings = map[int]string{
+	0x0000: "Temperature",
+	0x0001: "Reference Temperature",
+}
+var logParameterBits = []bitMaskBitDump{
+	{2, 7, 1, "DU"},
+	{2, 5, 1, "TSD"},
+	{2, 4, 1, "ETC"},
+	{2, 2, 3, "TMC"},
+	{2, 0, 3, "Format_and_linking"},
+}
+var overUnderParameterCode = map[byte]string{
+	0x00: "under-run (undefined)",
+	0x01: "over-run (undefined)",
+	0x20: "Command under-run",
+	0x21: "Command over-run",
+	0x40: "I_T Nexus under-run",
+	0x41: "I_T Nexus over-run",
+	0x80: "Unit of time under-run",
+	0x81: "Unit of time over-run",
+	0x02: "under-run (undefined) service delivery",
+	0x03: "over-run (undefined) service delivery",
+	0x22: "Command under-run; service delivery",
+	0x23: "Command over-run; service delivery",
+	0x42: "I_T Nexus under-run; service delivery",
+	0x43: "I_T Nexus over-run; service delivery",
+	0x82: "Unit of time under-run; service delivery",
+	0x83: "Unit of time over-run; service delivery",
+}
+var rwErrorParameterCode = map[byte]string{
+	0x00: "Errors corrected w/o delay",
+	0x01: "Errors corrected with delay",
+	0x02: "Total rewrites or rereads",
+	0x03: "Total errors corrected",
+	0x04: "Total correction algorithm processed",
+	0x05: "Total bytes processed",
+	0x06: "Total uncorrected errors",
+}
+var nonMediumErrorCountCode = map[byte]string{
+	0x00: "Non-Medium Error Count",
+}
+var startStopFuncs = map[byte]startStopDecode{
+	0x01: {"Date of Manufacture", domDecode},
+	0x02: {"Accounting Date", domDecode}, // Uses the same format as Date-of-Manufacture
+	0x03: {"Specified Cycle Count Over Device Lifetime", commonStartStopDataDecode},
+	0x04: {"Accumulated Start-Stop Cycles", commonStartStopDataDecode},
+	0x05: {"Specified Load-Unload Count Over Lifetime", commonStartStopDataDecode},
+	0x06: {"Accumulated Load-Unload Cycles", commonStartStopDataDecode},
+}
+var generalStatsBytes = []multiByteDump{
+	{4, 8, "Read commands"},
+	{12, 8, "Write commands"},
+	{20, 8, "Logical blocks received"},
+	{28, 8, "Logical blocks transmitted"},
+	{36, 8, "Read command processing intervals"},
+	{44, 8, "Write command processing intervals"},
+	{52, 8, "Weighted number of read commands plus write"},
+	{60, 8, "Weighted read command processing plus write"},
+}
+var page19StatFuncs = map[int]statisticsFuncs{
+	0x01: {"General Access Statistics and Performance", statsPage1},
+	0x02: {"Idle Time", statsPage2},
+	0x03: {"Time Interval", statsPage3},
+	0x04: {"Force Unit Access Statistics and Performance", statsPage4},
+}
+var tableArray = []tableArrayT{
+	overUnderParameterCode,
+	rwErrorParameterCode,
+	rwErrorParameterCode,
+	rwErrorParameterCode,
+	rwErrorParameterCode,
+	rwErrorParameterCode,
+	nonMediumErrorCountCode,
+}
+
 
 func diskinfoLogSense(d *diskInfoData) {
 	if data, length, err := scsiLogSense(d.fp, 0, 0); err == nil {
@@ -223,7 +216,7 @@ func decodeLogPage00(fp *os.File, data []byte, dataLen int) {
 	}
 	longest += 1
 	fmt.Printf("    Num    %-*s  Sub Pages\n", longest, "Name")
-	fmt.Printf("  %s\n", support.DashLine(6, longest + 1, 19))
+	fmt.Printf("  %s\n", support.DashLine(6, longest+1, 19))
 	for index := 4; index < dataLen; index++ {
 		if naf, ok := logsenseCodeFuncs[data[index]]; ok {
 			name = naf.name
@@ -238,12 +231,12 @@ func decodeLogPage00(fp *os.File, data []byte, dataLen int) {
 		fmt.Printf("|")
 		if subdata, sublen, err := scsiLogSense(fp, data[index], 0xff); err == nil {
 			for subIndex := 4; subIndex < sublen; subIndex += 2 {
-				if subdata[subIndex + 1] == 0xff {
+				if subdata[subIndex+1] == 0xff {
 					// Already know that 0xff is supported for this log sense page
 					// since a) it's required and b) that's the page/subpage just returned.
 					continue
 				}
-				fmt.Printf(" %02d", subdata[subIndex + 1])
+				fmt.Printf(" %02d", subdata[subIndex+1])
 			}
 		}
 		fmt.Printf("\n")
@@ -251,20 +244,7 @@ func decodeLogPage00(fp *os.File, data []byte, dataLen int) {
 }
 
 func dumpParameterBits(data []byte) {
-	outputLen := 4
-	fmt.Printf("    ")
-	for _, bits := range logParameterBits {
-		str := fmt.Sprintf("%s=%d ", bits.name,
-			data[bits.byteOffset] >> bits.rightShift & bits.mask)
-		if outputLen + len(str) >= 80 {
-			fmt.Printf("\n")
-			outputLen = 4
-		}
-		fmt.Printf("%s", str)
-		outputLen += len(str)
-	}
-	fmt.Printf("\n")
-
+	doBitDump(logParameterBits, data)
 }
 
 //noinspection GoUnusedParameter
@@ -279,7 +259,7 @@ func decodeParameterLoop(data []byte, dataLen int, table map[byte]string) {
 	for _, name := range table {
 		longestName = max(longestName, len(name))
 	}
-	fmt.Printf("    %-*s | Value\n  %s\n", longestName, "Parameter Name", support.DashLine(longestName + 2, 8))
+	fmt.Printf("    %-*s | Value\n  %s\n", longestName, "Parameter Name", support.DashLine(longestName+2, 8))
 	for offset := 4; offset < dataLen; {
 		offset += decodeParameterCode(data[offset:], table, longestName)
 	}
@@ -300,8 +280,8 @@ func decodeParameterCode(data []byte, table map[byte]string, longestName int) in
 //noinspection GoUnusedParameter
 func decodeLogPage0d(fp *os.File, data []byte, dataLen int) {
 	for index := 4; index < dataLen; index += 6 {
-		code := int(data[index]) << 8 | int(data[index + 1])
-		fmt.Printf("  %s: %d\n    ", logTemperatureStrings[code], data[index + 5])
+		code := int(data[index])<<8 | int(data[index+1])
+		fmt.Printf("  %s: %d\n    ", logTemperatureStrings[code], data[index+5])
 		dumpParameterBits(data[index:])
 	}
 }
@@ -309,8 +289,8 @@ func decodeLogPage0d(fp *os.File, data []byte, dataLen int) {
 //noinspection GoUnusedParameter
 func decodeLogPage0e(fp *os.File, data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; {
-		parameterCode := data[offset + 1]
-		parameterLen := data[offset + 3]
+		parameterCode := data[offset+1]
+		parameterLen := data[offset+3]
 		if ss, ok := startStopFuncs[parameterCode]; ok {
 			fmt.Printf("  %s: %s\n", ss.name, ss.process(data[offset:]))
 		} else {
@@ -333,7 +313,7 @@ func domDecode(data []byte) string {
 func commonStartStopDataDecode(data []byte) string {
 	val := 0
 	for i := 4; i < 8; i++ {
-		val = val << 8 | int(data[i])
+		val = val<<8 | int(data[i])
 	}
 	return fmt.Sprintf("%d", val)
 }
@@ -345,12 +325,12 @@ func decodeLogPage0f(fp *os.File, data []byte, dataLen int) {
 		dataLen = 68
 		fmt.Printf("  Only showing first 64 bytes out of %d available\n", dataLen)
 	}
-	dumpMemory(data[4:], dataLen - 4, "    ")
+	dumpMemory(data[4:], dataLen-4, "    ")
 }
 
 //noinspection GoUnusedParameter
 func decodeLogPage10(fp *os.File, data []byte, dataLen int) {
-	pageLength := int(data[2]) << 8 | int(data[3])
+	pageLength := int(data[2])<<8 | int(data[3])
 	if pageLength != 0x190 {
 		fmt.Printf("Specification violation: Page length should be 0x190 and is %x\n", pageLength)
 	}
@@ -374,15 +354,15 @@ func decodeTestResults(data []byte) bool {
 	if checkForZero == 0 {
 		return false
 	}
-	fmt.Printf("  Test code=%d, Test results=%d, Test number=%d\n", data[4] >> 5 & 0x7,
-		data[4] & 0xf, data[5])
+	fmt.Printf("  Test code=%d, Test results=%d, Test number=%d\n", data[4]>>5&0x7,
+		data[4]&0xf, data[5])
 	converter := dataToInt{data, 6, 2}
 	hours := converter.getInt()
 	fmt.Printf("  Accumulated power on hours: %d\n", hours)
 	converter = dataToInt{data, 8, 8}
 	addressOfFailure := converter.getInt64()
 	fmt.Printf("  Address of first failure: 0x%x\n", addressOfFailure)
-	fmt.Printf("  Sense key: %d\n", data[16] & 0xf)
+	fmt.Printf("  Sense key: %d\n", data[16]&0xf)
 	fmt.Printf("  ASC: %d, ASCQ: %d\n", data[17], data[18])
 
 	return true
@@ -390,20 +370,20 @@ func decodeTestResults(data []byte) bool {
 
 //noinspection GoUnusedParameter
 func decodeLogPage11(fp *os.File, data []byte, dataLen int) {
-	if dataLen != int(data[3]) + 4 {
+	if dataLen != int(data[3])+4 {
 		fmt.Printf("  Invalid parameter length\n")
 	}
 	fmt.Printf("  Percentage used endurance indicator: %d%%\n", data[7])
 }
 
 type backgroundScan struct {
-	name	string
-	decode	func([]byte, int) int
+	name   string
+	decode func([]byte, int) int
 }
 
 //noinspection GoUnusedParameter
 func decodeLogPage15(fp *os.File, data []byte, dataLen int) {
-	backgroundDecode := map[int]backgroundScan {
+	backgroundDecode := map[int]backgroundScan{
 		0x00: {"Background Scan Status", decodeBackgroundScan},
 		0x01: {"Background Scan Results", decodeBackgroundResults},
 	}
@@ -412,24 +392,24 @@ func decodeLogPage15(fp *os.File, data []byte, dataLen int) {
 		pc := convert.getInt()
 		if bd, ok := backgroundDecode[pc]; ok {
 			fmt.Printf("  %s\n", bd.name)
-			offset += bd.decode(data[offset:], dataLen - offset)
+			offset += bd.decode(data[offset:], dataLen-offset)
 		}
 	}
 }
 
 //noinspection GoUnusedParameter
 func decodeBackgroundScan(data []byte, dataLen int) int {
-	converter := dataToInt{data,4, 4}
+	converter := dataToInt{data, 4, 4}
 	fmt.Printf("    Accumulated power on minutes: %d\n", converter.getInt64())
 	fmt.Printf("    Scan status: %d\n", data[9])
 
-	converter.setOffsetCount(10,2)
+	converter.setOffsetCount(10, 2)
 	fmt.Printf("    Number of scans performed: %d\n", converter.getInt())
 
-	converter.setOffsetCount(12,2)
+	converter.setOffsetCount(12, 2)
 	fmt.Printf("    Scan progress: %d%%\n", converter.getInt())
 
-	converter.setOffsetCount(14,2)
+	converter.setOffsetCount(14, 2)
 	fmt.Printf("    Number of medium scans performed: %d\n", converter.getInt())
 
 	return int(data[3]) + 4
@@ -449,15 +429,15 @@ func decodeLogPage18(fp *os.File, data []byte, dataLen int) {
 
 func decodePortLog(data []byte) int {
 	paramLen := int(data[3])
-	fmt.Printf("  Protocol Identifer: %s\n", protocolIndentifier[data[4] & 0xf])
-	dumpMemory(data[5:], paramLen - 1, "    ")
+	fmt.Printf("  Protocol Identifer: %s\n", protocolIndentifier[data[4]&0xf])
+	dumpMemory(data[5:], paramLen-1, "    ")
 
 	return paramLen + 4
 }
 
 //noinspection GoUnusedParameter
 func decodeLogPage19(fp *os.File, data []byte, dataLen int) {
-	for offset :=4; offset < dataLen; {
+	for offset := 4; offset < dataLen; {
 		converter := dataToInt{data, offset, 2}
 		paramCode := converter.getInt()
 		if statPage, ok := page19StatFuncs[paramCode]; ok {
@@ -471,16 +451,7 @@ func decodeLogPage19(fp *os.File, data []byte, dataLen int) {
 }
 
 func statsPage1(data []byte) int {
-
-	for _, statMulti := range generalStatsBytes {
-		converter := dataToInt{data, statMulti.byteOffset, statMulti.numberBytes}
-		val := converter.getInt64()
-		fmt.Printf("    %s: %d", statMulti.name, val)
-		if val > 10000 {
-			fmt.Printf(" (%s)", support.Humanize(val, 1))
-		}
-		fmt.Printf("\n")
-	}
+	doMultiByteDump(generalStatsBytes, data)
 	return int(data[3] + 4)
 }
 

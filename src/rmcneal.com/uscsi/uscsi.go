@@ -5,6 +5,7 @@ import (
 	"os"
 	"fmt"
 	"strings"
+	"rmcneal.com/support"
 )
 
 type bitMaskBitDump struct {
@@ -203,4 +204,37 @@ func (d *dataToInt) getInt64() int64 {
 		val = val << 8 | int64(d.buf[i + d.offset])
 	}
 	return val
+}
+
+func doBitDump(table []bitMaskBitDump, data []byte) {
+	outputCols := 4
+	fmt.Printf("    ")
+	for _, pb := range table {
+		str := fmt.Sprintf("%s=%d ", pb.name, data[pb.byteOffset]>>pb.rightShift&pb.mask)
+		if outputCols+len(str) >= 80 {
+			fmt.Printf("\n    ")
+			outputCols = 4
+		}
+		outputCols += len(str)
+		fmt.Printf("%s", str)
+	}
+	fmt.Printf("\n")
+}
+
+func doMultiByteDump(table []multiByteDump, data []byte) {
+	longestStr := 0
+	for _, mb := range table {
+		longestStr = max(longestStr, len(mb.name))
+	}
+	fmt.Printf("  %s\n", support.DashLine(longestStr +2, 80 - longestStr - 7))
+	for _, mb := range table {
+		converter := dataToInt{data, mb.byteOffset, mb.numberBytes}
+		val := converter.getInt64()
+		fmt.Printf("  | %-*s | %d", longestStr, mb.name, val)
+		if val > 10000 {
+			fmt.Printf(" (%s)", support.Humanize(val, 1))
+		}
+		fmt.Printf("\n")
+	}
+	fmt.Printf("  %s\n", support.DashLine(longestStr +2, 80 - longestStr - 7))
 }
