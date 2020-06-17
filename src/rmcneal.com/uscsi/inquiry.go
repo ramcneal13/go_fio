@@ -4,6 +4,7 @@ import (
 	"os"
 	"fmt"
 	"rmcneal.com/support"
+	"bytes"
 )
 
 type inquiryNameAndFunc struct {
@@ -191,6 +192,17 @@ func init() {
 		{24,4,"Maximum unmap block descriptor count"},
 		{28,4,"Optimal unmap granularity"},
 		{36,8,"Maximum write same langth"},
+	}
+}
+
+func diskinfoInquiry(d *diskInfoData) {
+	if data, _, err := scsiInquiry(d.fp, 0, 0); err == nil {
+		bp := bytes.NewBuffer(data[8:16])
+		d.vendor = bp.String()
+		bp = bytes.NewBuffer(data[16:32])
+		d.productID = bp.String()
+	} else {
+		fmt.Printf("inquiry error: %s\n", err)
 	}
 }
 
@@ -548,7 +560,11 @@ func decodeInquiryPageb0(data []byte, dataLen int) {
 			dataLen - 4, converter.getInt())
 	}
 	for _, blb := range blockLimitsBytes {
-		converter := dataToInt{data,blb.byteOffset,blb.numberBytes}
-		fmt.Printf("    %s: %d\n", blb.name, converter.getInt64())
+		converter.setOffsetCount(blb.byteOffset,blb.numberBytes)
+		fmt.Printf("  %s: %d\n", blb.name, converter.getInt64())
+	}
+	converter.setOffsetCount(32,4)
+	if converter.getInt() & 0x80000000 != 0 {
+		fmt.Printf("  Unmap grandularity alignment: %d\n", converter.getInt() & 0x7fffffff)
 	}
 }

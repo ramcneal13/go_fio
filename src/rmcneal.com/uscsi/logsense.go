@@ -136,6 +136,16 @@ func init() {
 	}
 }
 
+func diskinfoLogSense(d *diskInfoData) {
+	if data, length, err := scsiLogSense(d.fp, 0, 0); err == nil {
+		for index := 4; index < length; index++ {
+			if data[index] == 0x11 {
+				d.isSSD = true
+			}
+		}
+	}
+}
+
 func scsiLogSenseCommand(fp *os.File) {
 
 	if data, length, err := scsiLogSense(fp, byte(pageRequest), 0); err == nil {

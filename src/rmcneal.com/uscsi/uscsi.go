@@ -51,9 +51,11 @@ func init() {
 	flag.StringVar(&commandName, "C", "", usageCommand+" (shorthand)")
 	flag.BoolVar(&showAll, "all", false, "show all pages")
 
-	scsiCommands = map[string]func(*os.File){
+	scsiCommands = map[string]func(*os.File) {
 		"inquiry":  scsiInquiryCommand,
 		"logsense": scsiLogSenseCommand,
+		"readcap": scsiReadCapCommand,
+		"diskinfo": diskInfo,
 	}
 	protocolIndentifier = map[byte]string{
 		0x0: "FCP-4",
