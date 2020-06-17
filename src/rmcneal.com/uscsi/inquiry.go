@@ -110,7 +110,7 @@ func init() {
 		0x90: {"Protocol Specific Logical Unit Information",decodeInquiryPage90},
 		0x91: {"Protocol Specific Port Information",decodeInquiryPage91},
 		0xb0: {"Block Limits",decodeInquiryPageb0},
-		0xb1: {"Block Device Characteristics", nil},
+		0xb1: {"Block Device Characteristics", decodeInquiryPageb1},
 		0xb2: {"Logical Block Provisioning", nil},
 		0xb7: {"Unknown page", nil},
 		0xcd: {"Unknown page", nil},
@@ -203,6 +203,13 @@ func diskinfoInquiry(d *diskInfoData) {
 		d.productID = bp.String()
 	} else {
 		fmt.Printf("inquiry error: %s\n", err)
+	}
+
+	if data, _, err := scsiInquiry(d.fp, 1, 0xb1); err == nil {
+		converter := dataToInt{data, 4,2}
+		if converter.getInt() == 1 {
+			d.isSSD = true
+		}
 	}
 }
 
@@ -570,4 +577,58 @@ func decodeInquiryPageb0(data []byte, dataLen int) {
 	if converter.getInt() & 0x80000000 != 0 {
 		fmt.Printf("  Unmap grandularity alignment: %d\n", converter.getInt() & 0x7fffffff)
 	}
+}
+
+var pageB1ProductType = map[byte]string {
+	0x00: "Not indicated",
+	0x01: "CFast",
+	0x02: "Compact Flash",
+	0x03: "Memory stick",
+	0x04: "MultiMedia Card",
+	0x05: "Secure digital card",
+	0x06: "XQD",
+	0x07: "Universal flash storage",
+}
+
+var pageB1Bits = []bitMaskBitDump {
+	{7,6, 3,"WABEREQ"},
+	{7,4, 3,"WACEREQ"},
+	{8,1, 1,"FUAB"},
+	{8,0,1,"VBULS"},
+}
+
+var pageB1NominalType = map[byte]string {
+	0x00: "Not reported",
+	0x01: "5.25 inch",
+	0x02: "3.5 inch",
+	0x03: "2.5 inch",
+	0x04: "1.8 inch",
+	0x05: "Less than 1.8 inch",
+}
+
+func decodeInquiryPageb1(data []byte, dataLen int) {
+	fmt.Printf("  Rotation rate: ")
+	converter := dataToInt{data, 4,2}
+	rotationRate := converter.getInt()
+	if rotationRate == 0 {
+		fmt.Printf("Not reported\n")
+	} else if rotationRate == 1 {
+		fmt.Printf("Solid State\n")
+	} else {
+		fmt.Printf("%d RPM\n")
+	}
+	fmt.Printf("  Product type: %s\n", pageB1ProductType[data[6]])
+	fmt.Printf("  Nominal Form Factor: %s\n", pageB1NominalType[data[7] & 0xf])
+	outputCols := 4
+	fmt.Printf("    ")
+	for _, pb := range pageB1Bits {
+		str := fmt.Sprintf("%s=%d ", pb.name, data[pb.byteOffset] >> pb.rightShift & pb.mask)
+		if outputCols + len(str) >= 80 {
+			fmt.Printf("\n    ")
+			outputCols = 4
+		}
+		outputCols += len(str)
+		fmt.Printf("%s", str)
+	}
+	fmt.Printf("\n")
 }
