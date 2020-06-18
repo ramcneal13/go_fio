@@ -24,21 +24,30 @@ func init() {
 	pageCodeFuncs = map[byte]inquiryNameAndFunc{
 		0x00: {"Supported VPD Pages", decodeInquiryPage00},
 		0x80: {"Unit Serial Number", decodeInquiryPage80},
+		0x82: {"ASCII implemented operating definition", decodeInquiryPage82},
 		0x83: {"Device Identification", decodeInquiryPage83},
 		0x86: {"Extended INQUIRY Data", decodeInquiryPage86},
 		0x87: {"Mode Page Policy", decodeInquiryPage87},
 		0x88: {"SCSI Ports", decodeInquiryPage88},
 		0x89: {"ASCII Information", decodeInquiryPage89},
-		0x8a: {"Power Condition", decodeInquiryPage8a},
-		0x8d: {"Power Consumption", decodeInquriyPage8d},
+		0x8a: {"Power Condition", decodeInquiryPage8A},
+		0x8d: {"Power Consumption", decodeInquriyPage8D},
 		0x90: {"Protocol Specific Logical Unit Information", decodeInquiryPage90},
 		0x91: {"Protocol Specific Port Information", decodeInquiryPage91},
-		0xb0: {"Block Limits", decodeInquiryPageb0},
-		0xb1: {"Block Device Characteristics", decodeInquiryPageb1},
-		0xb2: {"Logical Block Provisioning", decodeInquiryPageb2},
-		0xb7: {"Block Limits Extension", decodeInquiryPageb7},
-		0xcd: {"Unknown page", nil},
+		0xb0: {"Block Limits", decodeInquiryPageB0},
+		0xb1: {"Block Device Characteristics", decodeInquiryPageB1},
+		0xb2: {"Logical Block Provisioning", decodeInquiryPageB2},
+		0xb5: {"Block Deivce Characteristics Extension", decodeInquiryPageB5},
+		0xb7: {"Block Limits Extension", decodeInquiryPageB7},
+		0xc0: {"Firmware Numbers", decodeInquiryPageC0 },
+		0xc1: {"ETF Log Data Code", decodeInquiryPageC1},
+		0xc2: {"Jumper Settings", decodeInquiryPageC2},
+		0xc3: {"Device Behavior",decodeInquiryPageC3},
 	}
+}
+
+func decodeRawData(data []byte, dataLen int) {
+	dumpMemory(data, dataLen, "  ")
 }
 
 func diskinfoInquiry(d *diskInfoData) {
@@ -76,6 +85,11 @@ func scsiInquiryCommand(fp *os.File) {
 		}
 
 		if showAll {
+			converter := dataToInt{data,2,2}
+			if converter.getInt() + 4 < length {
+				length = converter.getInt() + 4
+			}
+
 			for index := 4; index < length; index++ {
 				if pageData, pageLength, pageErr := scsiInquiry(fp, evpd, data[byte(index)]); pageErr == nil {
 					if naf, ok := pageCodeFuncs[data[byte(index)]]; ok {
@@ -98,7 +112,8 @@ func scsiInquiryCommand(fp *os.File) {
 						naf.decode(data, length)
 					}
 				} else {
-					fmt.Printf("Failed to find decode function for page 0x%x\n", page)
+					fmt.Printf("Page 0x%x: Unknown\n", pageRequest)
+					decodeRawData(data, length)
 				}
 			} else {
 				decodeStandInquiry(data, length)
@@ -188,6 +203,7 @@ func decodeStandInquiry(data []byte, dataLen int) {
 	for i := 32; i < 36; i++ {
 		fmt.Printf("%c", data[i])
 	}
+	fmt.Printf("\n")
 	doBitDump(standardInquiryBits, data)
 	fmt.Printf("  Remaining %d bytes of INQUIRY data\n", data[4])
 	dumpMemory(data[36:], dataLen-36, "    ")
@@ -197,25 +213,42 @@ func decodeInquiryPage00(data []byte, dataLen int) {
 	var supportedPage string
 	var naf inquiryNameAndFunc
 	var ok bool
+	var pageDescriptor string
 
-	longestTitle := 0
+	pageDescriptor = "Unknown -- raw data output"
+	longestTitle := len(pageDescriptor)
 	for index := 4; index < dataLen; index++ {
 		if naf, ok := pageCodeFuncs[data[index]]; ok {
 			longestTitle = max(longestTitle, len(naf.name))
 		}
 	}
+
+	converter := dataToInt{data,2,2}
+	if converter.getInt() != dataLen {
+		if converter.getInt() < dataLen {
+			dataLen = converter.getInt()
+		} else {
+			fmt.Printf("WARNING: deivces reports %d for length of VPD Page 00, actual is %d\n",
+				converter.getInt(), dataLen)
+		}
+	}
+
 	supportedTitle := "Supported"
 	fmt.Printf("    %4s | %-*s | %s\n", "Page", longestTitle, "Title", supportedTitle)
 	fmt.Printf("  %s\n", support.DashLine(6, longestTitle+2, len(supportedTitle)+2))
 	for index := 4; index < dataLen; index += 1 {
 		if naf, ok = pageCodeFuncs[data[index]]; ok {
+			pageDescriptor = naf.name
 			if naf.decode == nil {
 				supportedPage = "(not yet)"
 			} else {
 				supportedPage = ""
 			}
+		} else {
+			pageDescriptor = "Unknown -- raw data output"
+			supportedPage = "(not yet)"
 		}
-		fmt.Printf("  |  %02x  | %-*s | %s\n", data[index], longestTitle, naf.name, supportedPage)
+		fmt.Printf("  |  %02x  | %-*s | %s\n", data[index], longestTitle, pageDescriptor, supportedPage)
 	}
 }
 
@@ -226,6 +259,11 @@ func decodeInquiryPage80(data []byte, dataLen int) {
 		fmt.Printf("%c", data[i])
 	}
 	fmt.Printf("\n")
+}
+
+//noinspection GoUnusedParameter
+func decodeInquiryPage82(data []byte, dataLen int) {
+	fmt.Printf("  Operating definition: %s\n", dumpASCII(data, 5, int(data[4])))
 }
 
 //noinspection GoUnusedParameter
@@ -358,6 +396,11 @@ func decodeInquiryPage86(data []byte, unused int) {
 }
 
 func decodeInquiryPage87(data []byte, dataLen int) {
+	converter := dataToInt{data,2,2}
+	if converter.getInt() + 4 < dataLen {
+		dataLen = converter.getInt() + 4
+	}
+
 	for i := 4; i < dataLen; i += 4 {
 		fmt.Printf("  Policy page code: 0x%x, subpage code: 0x%x\n", data[i], data[i+1])
 		fmt.Printf("    MLUS=%d, Policy: %s\n", data[i+2]>>7, modePagePolicy[data[i+2]&0x3])
@@ -365,6 +408,11 @@ func decodeInquiryPage87(data []byte, dataLen int) {
 }
 
 func decodeInquiryPage88(data []byte, dataLen int) {
+	converter := dataToInt{data,2,2}
+	if converter.getInt() + 4 < dataLen {
+		dataLen = converter.getInt() + 4
+	}
+
 	fmt.Printf("  Page Length: %d\n", int(data[2])<<8|int(data[3]))
 	for offset := 4; offset < dataLen; {
 		offset += decodeSCSIPort(data[offset:])
@@ -460,7 +508,7 @@ var page8APowerConditionBytes = []multiByteDump{
 }
 
 //noinspection GoUnusedParameter
-func decodeInquiryPage8a(data []byte, unused int) {
+func decodeInquiryPage8A(data []byte, unused int) {
 	doBitDump(page8APowerConditionBits, data)
 	doMultiByteDump(page8APowerConditionBytes, data)
 }
@@ -474,7 +522,12 @@ var powerConsumptionUnits = map[byte]string{
 	0x05: "Microwatts",
 }
 
-func decodeInquriyPage8d(data []byte, dataLen int) {
+func decodeInquriyPage8D(data []byte, dataLen int) {
+	converter := dataToInt{data,2,2}
+	if converter.getInt() + 4 < dataLen {
+		dataLen = converter.getInt() + 4
+	}
+
 	for offset := 4; offset < dataLen; offset += 4 {
 		fmt.Printf("  Power consumption ID: %d is %d in %s\n", data[offset],
 			int(data[offset+2])<<8|int(data[offset+3]), powerConsumptionUnits[data[offset+1]&0x7])
@@ -482,6 +535,11 @@ func decodeInquriyPage8d(data []byte, dataLen int) {
 }
 
 func decodeInquiryPage90(data []byte, dataLen int) {
+	converter := dataToInt{data,2,2}
+	if converter.getInt() + 4 < dataLen {
+		dataLen = converter.getInt() + 4
+	}
+
 	for offset := 4; offset < dataLen; {
 		offset = decodeLogicalUnit(data[offset:], offset)
 	}
@@ -497,6 +555,11 @@ func decodeLogicalUnit(data []byte, offset int) int {
 }
 
 func decodeInquiryPage91(data []byte, dataLen int) {
+	converter := dataToInt{data,2,2}
+	if converter.getInt() + 4 < dataLen {
+		dataLen = converter.getInt() + 4
+	}
+
 	for offset := 4; offset < dataLen; {
 		offset = decodeProtocolSpecificPort(data[offset:], offset)
 	}
@@ -523,7 +586,7 @@ var pageB0BlockLimitsBytes = []multiByteDump{
 	{36, 8, "Maximum write same langth"},
 }
 
-func decodeInquiryPageb0(data []byte, dataLen int) {
+func decodeInquiryPageB0(data []byte, dataLen int) {
 	converter := dataToInt{data, 2, 2}
 	if dataLen != converter.getInt()+4 {
 		fmt.Printf("  Invalid data count returned (%d) verses page length (%d)\n",
@@ -564,7 +627,7 @@ var pageB1NominalType = map[byte]string{
 }
 
 //noinspection GoUnusedParameter
-func decodeInquiryPageb1(data []byte, dataLen int) {
+func decodeInquiryPageB1(data []byte, dataLen int) {
 	fmt.Printf("  Rotation rate: ")
 	converter := dataToInt{data, 4, 2}
 	rotationRate := converter.getInt()
@@ -590,9 +653,22 @@ var pageB2LocalBlockBits = []bitMaskBitDump {
 }
 
 //noinspection GoUnusedParameter
-func decodeInquiryPageb2(data []byte, dataLen int) {
+func decodeInquiryPageB2(data []byte, dataLen int) {
 	fmt.Printf("  Threshold exponent: %d\n", data[4])
 	doBitDump(pageB2LocalBlockBits, data)
+}
+
+var pageB5Bytes = []multiByteDump {
+	{5,1,"Utilization type"},
+	{6,1,"Utilization units"},
+	{7,1,"Utilization interval"},
+	{8,4,"Utilization B"},
+	{12,4,"Utilization A"},
+}
+
+//noinspection GoUnusedParameter
+func decodeInquiryPageB5(data []byte, dataLen int) {
+	doMultiByteDump(pageB5Bytes, data)
 }
 
 var pageB7Bytes = []multiByteDump {
@@ -602,6 +678,113 @@ var pageB7Bytes = []multiByteDump {
 }
 
 //noinspection GoUnusedParameter
-func decodeInquiryPageb7(data []byte, dataLen int) {
+func decodeInquiryPageB7(data []byte, dataLen int) {
 	doMultiByteDump(pageB7Bytes, data)
+}
+
+var monthNumToName = map[string]string {
+	"01": "Jan",
+	"02": "Feb",
+	"03": "Mar",
+	"04": "Apr",
+	"05": "May",
+	"06": "Jun",
+	"07": "Jul",
+	"08": "Aug",
+	"09": "Sep",
+	"10": "Oct",
+	"11": "Nov",
+	"12": "Dec",
+}
+
+type asciiOffsetTable struct {
+	offset	int
+	count	int
+	name	string
+}
+
+var pageC0Table = []asciiOffsetTable {
+	{4,8,"SCSI firmware release number"},
+	{12,8,"Servo firmware release number"},
+	{20,8,"SAP block point (major/minor)"},
+	{28,4,"Servo firmware release date"},
+	{32,4,"Servo ROM release date"},
+	{36,8,"SAP firmware release number"},
+	{44,4,"SAP firmware release date"},
+	{48,4,"SAP firmware release year"},
+	{52,4,"SAP manufacturing key"},
+	{56,4,"Servo firmare product family IDs"},
+}
+
+func decodeInquiryPageC0(data []byte, dataLen int) {
+	pageLen := data[3]
+	if int(pageLen) + 4 < dataLen {
+		dataLen = int(pageLen) + 4
+	} else {
+		fmt.Printf("WARNING: short data returned; expected %d, got %d\n", pageLen + 4, dataLen)
+	}
+	longestTitle := 0
+	longestValue := 0
+	for _, table := range pageC0Table {
+		longestTitle = max(longestTitle, len(table.name))
+		longestValue = max(longestValue, table.count)
+	}
+	fmt.Printf("  %s\n", support.DashLine(longestTitle+ 2, longestValue + 2))
+	for _, table := range pageC0Table {
+		if table.offset + table.count > dataLen {
+			break
+		}
+		fmt.Printf("  | %-*s | %-*s |\n", longestTitle, table.name, longestValue,
+			dumpASCII(data, table.offset, table.count))
+	}
+}
+
+/*
+ * I dislike the MMDDYYYY format. Americans use MMDDYYYY, but Europeans use DDMMYYYY. So, convert the ASCII
+ * date found in the data to day-month string-year. This removes abiguity for example 07052020. Is that July 5th 2020
+ * or is it May 7th 2020.
+ */
+func dataToDate(data []byte) string {
+	b := bytes.NewBuffer(data[0:2])
+	day := bytes.NewBuffer(data[2:4])
+	year := bytes.NewBuffer(data[4:8])
+	return fmt.Sprintf("%s-%s-%s", day.String(), monthNumToName[b.String()], year.String())
+}
+
+//noinspection GoUnusedParameter
+func decodeInquiryPageC1(data []byte, dataLen int) {
+	fmt.Printf("  ETF Log date: %s\n", dataToDate(data[4:12]))
+	fmt.Printf("  Compile date: %s\n", dataToDate(data[12:20]))
+
+}
+
+var pageC2bits = []bitMaskBitDump {
+	{4,7,1,"Delayed motor start"},
+	{4,6,1,"Motor start"},
+	{4,5,1,"Write protect"},
+	{4,4,1,"Parity enable"},
+	{4,0,0xf,"Drive ID"},
+}
+
+//noinspection GoUnusedParameter
+func decodeInquiryPageC2(data []byte, dataLen int) {
+	doBitDump(pageC2bits, data)
+}
+
+var deviceBehaviorTable = []multiByteDump {
+	{4,1,"Version number"},
+	{5,1,"Behavior code"},
+	{6,1,"Behavior version"},
+	{23,1,"# of interleaves"},
+	{24,1,"Default # of cache segmetns"},
+}
+
+//noinspection GoUnusedParameter
+func decodeInquiryPageC3(data []byte, dataLen int) {
+	fmt.Printf("  ASCII family number: ")
+	for offset := 7; offset < 23; offset++ {
+		fmt.Printf("%c", data[offset])
+	}
+	fmt.Printf("\n")
+	doMultiByteDump(deviceBehaviorTable, data)
 }
