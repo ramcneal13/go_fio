@@ -84,14 +84,21 @@ func scsiInquiryCommand(fp *os.File) {
 			}
 		}
 
+		converter := dataToInt{data, 2,2}
+		if converter.getInt() + 4 < length {
+			length = converter.getInt() + 4
+		}
+
 		if showAll {
-			converter := dataToInt{data,2,2}
-			if converter.getInt() + 4 < length {
-				length = converter.getInt() + 4
-			}
 
 			for index := 4; index < length; index++ {
 				if pageData, pageLength, pageErr := scsiInquiry(fp, evpd, data[byte(index)]); pageErr == nil {
+					converter = dataToInt{pageData, 2, 2}
+
+					if converter.getInt() + 4 < pageLength {
+						pageLength = converter.getInt() + 4
+					}
+
 					if naf, ok := pageCodeFuncs[data[byte(index)]]; ok {
 						fmt.Printf("Page 0x%x: %s\n", data[byte(index)], naf.name)
 						if naf.decode != nil {
@@ -220,16 +227,6 @@ func decodeInquiryPage00(data []byte, dataLen int) {
 	for index := 4; index < dataLen; index++ {
 		if naf, ok := pageCodeFuncs[data[index]]; ok {
 			longestTitle = max(longestTitle, len(naf.name))
-		}
-	}
-
-	converter := dataToInt{data,2,2}
-	if converter.getInt() != dataLen {
-		if converter.getInt() < dataLen {
-			dataLen = converter.getInt()
-		} else {
-			fmt.Printf("WARNING: deivces reports %d for length of VPD Page 00, actual is %d\n",
-				converter.getInt(), dataLen)
 		}
 	}
 
@@ -396,11 +393,6 @@ func decodeInquiryPage86(data []byte, unused int) {
 }
 
 func decodeInquiryPage87(data []byte, dataLen int) {
-	converter := dataToInt{data,2,2}
-	if converter.getInt() + 4 < dataLen {
-		dataLen = converter.getInt() + 4
-	}
-
 	for i := 4; i < dataLen; i += 4 {
 		fmt.Printf("  Policy page code: 0x%x, subpage code: 0x%x\n", data[i], data[i+1])
 		fmt.Printf("    MLUS=%d, Policy: %s\n", data[i+2]>>7, modePagePolicy[data[i+2]&0x3])
@@ -408,11 +400,6 @@ func decodeInquiryPage87(data []byte, dataLen int) {
 }
 
 func decodeInquiryPage88(data []byte, dataLen int) {
-	converter := dataToInt{data,2,2}
-	if converter.getInt() + 4 < dataLen {
-		dataLen = converter.getInt() + 4
-	}
-
 	fmt.Printf("  Page Length: %d\n", int(data[2])<<8|int(data[3]))
 	for offset := 4; offset < dataLen; {
 		offset += decodeSCSIPort(data[offset:])
@@ -523,11 +510,6 @@ var powerConsumptionUnits = map[byte]string{
 }
 
 func decodeInquriyPage8D(data []byte, dataLen int) {
-	converter := dataToInt{data,2,2}
-	if converter.getInt() + 4 < dataLen {
-		dataLen = converter.getInt() + 4
-	}
-
 	for offset := 4; offset < dataLen; offset += 4 {
 		fmt.Printf("  Power consumption ID: %d is %d in %s\n", data[offset],
 			int(data[offset+2])<<8|int(data[offset+3]), powerConsumptionUnits[data[offset+1]&0x7])
@@ -535,11 +517,6 @@ func decodeInquriyPage8D(data []byte, dataLen int) {
 }
 
 func decodeInquiryPage90(data []byte, dataLen int) {
-	converter := dataToInt{data,2,2}
-	if converter.getInt() + 4 < dataLen {
-		dataLen = converter.getInt() + 4
-	}
-
 	for offset := 4; offset < dataLen; {
 		offset = decodeLogicalUnit(data[offset:], offset)
 	}
@@ -555,11 +532,6 @@ func decodeLogicalUnit(data []byte, offset int) int {
 }
 
 func decodeInquiryPage91(data []byte, dataLen int) {
-	converter := dataToInt{data,2,2}
-	if converter.getInt() + 4 < dataLen {
-		dataLen = converter.getInt() + 4
-	}
-
 	for offset := 4; offset < dataLen; {
 		offset = decodeProtocolSpecificPort(data[offset:], offset)
 	}
@@ -586,14 +558,10 @@ var pageB0BlockLimitsBytes = []multiByteDump{
 	{36, 8, "Maximum write same langth"},
 }
 
+//noinspection GoUnusedParameter
 func decodeInquiryPageB0(data []byte, dataLen int) {
-	converter := dataToInt{data, 2, 2}
-	if dataLen != converter.getInt()+4 {
-		fmt.Printf("  Invalid data count returned (%d) verses page length (%d)\n",
-			dataLen-4, converter.getInt())
-	}
 	doMultiByteDump(pageB0BlockLimitsBytes, data)
-	converter.setOffsetCount(32, 4)
+	converter := dataToInt{data,32,4}
 	if converter.getInt()&0x80000000 != 0 {
 		fmt.Printf("  Unmap grandularity alignment: %d\n", converter.getInt()&0x7fffffff)
 	}

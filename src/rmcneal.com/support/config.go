@@ -313,6 +313,17 @@ func (j *JobData) validate(section string) error {
 	if j.Runtime == "" {
 		j.Runtime = "24h"
 	}
+	/*
+	 * ParseDuration only goes up to 'h' for hours. So, deal with 'd' as a specical case.
+	 */
+	if strings.HasSuffix(j.Runtime, "d") {
+		daysStr := strings.TrimSuffix(j.Runtime, "d")
+		if numberOfDays, err := strconv.ParseInt(daysStr, 0, 32); err == nil {
+			j.Runtime = fmt.Sprintf("%dh", numberOfDays * 24)
+		} else {
+			return err
+		}
+	}
 	if dur, err := time.ParseDuration(j.Runtime); err == nil {
 		j.runtime = dur
 	} else {

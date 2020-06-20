@@ -153,9 +153,20 @@ func scsiLogSenseCommand(fp *os.File) {
 			}
 		}
 
+		converter := dataToInt{data, 2,2}
+		if converter.getInt() + 4 < length {
+			length = converter.getInt() + 4
+		}
+
 		if showAll {
 			for index := 4; index < length; index++ {
 				if pageData, pageLength, pageError := scsiLogSense(fp, data[byte(index)], 0); pageError == nil {
+					converter = dataToInt{pageData, 2, 2}
+
+					if converter.getInt() + 4 < pageLength {
+						pageLength = converter.getInt() + 4
+					}
+
 					if naf, ok := logsenseCodeFuncs[data[byte(index)]]; ok {
 						fmt.Printf("Page 0x%x: %s\n", data[byte(index)], naf.name)
 						naf.decode(fp, pageData, pageLength)

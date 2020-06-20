@@ -236,10 +236,13 @@ func (j *Job) Error() string {
 // []--------------------------------------------------------------[]
 
 func (j *Job) patternFill(bp []byte) {
+	var up *int64
 	switch {
 	case j.JobParams.Block_Pattern == PatternRand:
-		for i := range bp {
-			bp[i] = byte(rand.Intn(256))
+		slice := (*reflect.SliceHeader)(unsafe.Pointer(&bp))
+		for offset := 0; offset < len(bp); offset += 8 {
+			up = (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
+			*up = rand.Int63()
 		}
 	case j.JobParams.Block_Pattern == PatternIncr:
 		for i := range bp {
