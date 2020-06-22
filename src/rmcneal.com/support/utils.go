@@ -330,6 +330,13 @@ func (s *RandLCG) RandSeed(seed int64) {
 	s.lcgSeed = seed
 }
 
+func (s *RandLCG) Value63() int64 {
+	a := int64(1103515245)
+	c := int64(12345)
+	s.lcgSeed = a*s.lcgSeed + c
+	return s.lcgSeed
+}
+
 func (s *RandLCG) Value(m int64) int64 {
 	a := int64(1103515245)
 	c := int64(12345)

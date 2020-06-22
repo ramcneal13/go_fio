@@ -237,25 +237,19 @@ func (j *Job) Error() string {
 
 func (j *Job) patternFill(bp []byte) {
 	var up *int64
+	var engine func()int64
+
 	switch {
 	case j.JobParams.Block_Pattern == PatternRand:
-		slice := (*reflect.SliceHeader)(unsafe.Pointer(&bp))
-		for offset := 0; offset < len(bp); offset += 8 {
-			up = (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
-			*up = rand.Int63()
-		}
-	case j.JobParams.Block_Pattern == PatternIncr:
-		for i := range bp {
-			bp[i] = byte(i)
-		}
+		engine = rand.Int63
 	case j.JobParams.Block_Pattern == PatternLCG:
-		for i := range bp {
-			bp[i] = byte(j.lcgPattern.Value(256))
-		}
-	case j.JobParams.Block_Pattern == PatternZero:
-		for i := range bp {
-			bp[i] = byte(0)
-		}
+		engine = j.lcgPattern.Value63
+	}
+
+	slice := (*reflect.SliceHeader)(unsafe.Pointer(&bp))
+	for offset := 0; offset < len(bp); offset += 8 {
+		up = (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(slice.Data)) + uintptr(offset)))
+		*up = engine()
 	}
 }
 

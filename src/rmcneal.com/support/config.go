@@ -18,9 +18,7 @@ const (
 	WriteSeq      = "write"
 	WriteRand     = "randwrite"
 	Rwseq         = "rwseq"
-	PatternZero   = "zero"
 	PatternRand   = "rand"
-	PatternIncr   = "incr"
 	PatternLCG    = "lcg"
 	RwrandVerify  = "rwv"
 	None          = "none"
@@ -335,10 +333,10 @@ func (j *JobData) validate(section string) error {
 	}
 
 	if j.Block_Pattern == "" {
-		j.Block_Pattern = PatternLCG
+		j.Block_Pattern = PatternRand
 	}
 	switch j.Block_Pattern {
-	case PatternRand, PatternZero, PatternIncr, PatternLCG:
+	case PatternRand, PatternLCG:
 	default:
 		return fmt.Errorf("[section %s]/Invalid pattern %s", section,
 			j.Block_Pattern)
