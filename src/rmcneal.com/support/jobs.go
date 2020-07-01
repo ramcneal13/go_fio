@@ -120,14 +120,19 @@ func JobInit(name string, jd *JobData, stats *StatsState) (*Job, error) {
 }
 
 func (j *Job) FillAsNeeded(tracker *tracking) error {
-	if fileinfo, err := j.fp.Stat(); err == nil {
+	var fileinfo  os.FileInfo
+
+	if fileinfo, j.lastErr = j.fp.Stat(); j.lastErr == nil {
 		if fileinfo.Mode().IsRegular() {
 			if fileinfo.Size() < j.JobParams.fileSize {
 				j.fileFill(tracker)
-				_, _ = j.fp.Seek(0, 0)
-				_ = j.fp.Sync()
-				// Reload the stat structure after filling the file
-				fileinfo, _ = j.fp.Stat()
+				if j.lastErr == nil {
+					_, _ = j.fp.Seek(0, 0)
+					tracker.UpdateName(j.TargetName, "(syncing)")
+					_ = j.fp.Sync()
+					// Reload the stat structure after filling the file
+					fileinfo, _ = j.fp.Stat()
+				}
 			}
 			j.JobParams.fileSize = fileinfo.Size()
 			j.JobParams.Size = Humanize(j.JobParams.fileSize, 1)
@@ -135,18 +140,20 @@ func (j *Job) FillAsNeeded(tracker *tracking) error {
 				j.validInit = false
 				return fmt.Errorf("must set file size or use a preexisting file")
 			}
-		}
-	} else {
-		// This should really only be done if the configuration is going to request
-		// some variant of a verify operation which will need the data pattern
-		// correctly laid out on the device.
-		if j.JobParams.Force_Fill {
-			j.fileFill(tracker)
-		}
+		} else {
+			// This should really only be done if the configuration is going to request
+			// some variant of a verify operation which will need the data pattern
+			// correctly laid out on the device.
+			if j.JobParams.Force_Fill {
+				j.fileFill(tracker)
+			}
 
-		_, _ = j.fp.Seek(0, 0)
+			_, _ = j.fp.Seek(0, 0)
+		}
 	}
-	return nil
+
+	// lastErr can also be set by calling AbortPrep()
+	return j.lastErr
 }
 
 func (j *Job) ShowConfig() {
@@ -347,6 +354,12 @@ func (j *Job) fileFill(tracker *tracking) {
 	go func() {
 		var curBlock int64
 		for curBlock = int64(0); (curBlock + fillSize) <= lastBlock; curBlock += fillSize {
+			if !j.threadRun {
+				for i := 0; i < j.JobParams.IODepth; i++ {
+					j.thrCompletes <- JobReport{}
+				}
+				break
+			}
 			ad := AccessData{op: WriteBaseVerifyType, blk: curBlock, len: int64(1024 * 1024)}
 			j.nextBlks <- ad
 		}
@@ -355,7 +368,7 @@ func (j *Job) fileFill(tracker *tracking) {
 		// at the end which doesn't get initialized, but during the actual run the worker
 		// will access the data. So, create a final write request that accounts for that
 		// last little bit.
-		if (lastBlock - curBlock) > 0 {
+		if j.threadRun && (lastBlock - curBlock) > 0 {
 			ad := AccessData{op: WriteBaseVerifyType, blk: curBlock, len: lastBlock - curBlock}
 			j.nextBlks <- ad
 		}
@@ -372,13 +385,50 @@ func (j *Job) fileFill(tracker *tracking) {
 	}
 
 	ticker := time.Tick(time.Second)
+	startTime := time.Now()
+	lastReportedSize := int64(0)
+	fakeETA := int64(0)
 
 	for {
 		select {
 		case <-ticker:
 			fi, _ := j.fp.Stat()
-			tracker.UpdateName(j.TargetName, fmt.Sprintf(":%.1f",
-				float64(fi.Size())/float64(j.JobParams.fileSize)*100.0))
+			elapsed := time.Since(startTime)
+			etaStr := ""
+
+			bytesPerSecond := fi.Size() / int64(elapsed.Seconds())
+			if bytesPerSecond == 0 {
+				bytesPerSecond = 1 // Avoid divide by zero
+			}
+			secondsRemaining := (j.JobParams.fileSize - fi.Size()) / bytesPerSecond
+
+			/*
+			 * The whole business of lasteReportedSize and fake ETA is due to FileInfo.Size()
+			 * not being updated with the actual file size on demand. It gets updated once every
+			 * 60 to 75 seconds. This is not a bug in Go since one can see the same behavior using
+			 * 'ls -l' on the file. This is also not unique to one particular flavor of Unix.
+			 * It's a common practice of file system code to not report the in core data blocks, only
+			 * the data actually on disk which kind of makes sense.
+			 */
+			if fi.Size() != lastReportedSize {
+				etaStr = fmt.Sprintf(" (ETA:%s)",
+					time.Duration(time.Duration(secondsRemaining)*time.Second))
+				lastReportedSize = fi.Size()
+				fakeETA = secondsRemaining
+			} else if fakeETA != 0 {
+				etaStr = fmt.Sprintf(" (ETA:%s)", time.Duration(time.Duration(fakeETA)*time.Second))
+				fakeETA--
+			} else {
+				/*
+				 * If we've run out of time on the fake ETA reset lastRecordSize so that the
+				 * seconds remaining will get recalculated next time through the loop. Better
+				 * than nothing.
+				 */
+				lastReportedSize = 0
+			}
+
+			tracker.UpdateName(j.TargetName, fmt.Sprintf(":%.1f%s",
+				float64(fi.Size())/float64(j.JobParams.fileSize)*100.0, etaStr))
 
 		case <-j.thrCompletes:
 			fillJobs--
@@ -412,6 +462,11 @@ func opToString(op int) string {
 }
 
 func (j *Job) Stop() {
+	j.threadRun = false
+}
+
+func (j *Job) AbortPrep() {
+	j.lastErr = fmt.Errorf("forced abort of prep")
 	j.threadRun = false
 }
 

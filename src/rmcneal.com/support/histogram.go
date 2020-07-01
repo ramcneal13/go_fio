@@ -79,7 +79,15 @@ func (d *DistroGraph) Aggregate(t time.Duration) {
 	}
 }
 
-func (d *DistroGraph) Graph() {
+func (d *DistroGraph) print(useGroup bool, format string, a ...interface{}) {
+	if useGroup {
+		d.printer.incoming <- PrintOp{PrintGroupStr, fmt.Sprintf(format, a...), nil}
+	} else {
+		d.printer.Send(format, a...)
+	}
+}
+
+func (d *DistroGraph) Graph(useGroup bool) {
 	/* ---- Figure out column widths to start ---- */
 	distroCol := 0
 	countCol := 0
@@ -135,39 +143,39 @@ func (d *DistroGraph) Graph() {
 
 	if d.title != "" {
 		if len(d.title) <= scalerCol {
-			d.printer.Send("%*s%*s%s%*scount\n", distroCol, "ns", (scalerCol+2-len(d.title))/2, "", d.title,
+			d.print(useGroup, "%*s%*s%s%*scount\n", distroCol, "ns", (scalerCol+2-len(d.title))/2, "", d.title,
 				(scalerCol+2-len(d.title))/2, "")
 		} else {
 			d.printer.Send(d.title)
 		}
 	}
-	d.printer.Send("%*s%s\n", distroCol, "", DashLine(scalerCol))
+	d.print(useGroup,"%*s%s\n", distroCol, "", DashLine(scalerCol))
 
 	for k, v := range d.Bins {
 		if k >= firstIdx && k <= lastIdx {
 			if d.linear {
 				switch {
 				case k == firstIdx:
-					d.printer.Send("<= ")
+					d.print(useGroup,"<= ")
 				case k == lastIdx:
-					d.printer.Send(">= ")
+					d.print(useGroup,">= ")
 				default:
-					d.printer.Send("   ")
+					d.print(useGroup,"   ")
 				}
-				d.printer.Send("%*s|", distroCol-3, d.lower+(time.Duration(k)*d.interval))
+				d.print(useGroup,"%*s|", distroCol-3, d.lower+(time.Duration(k)*d.interval))
 			} else {
-				d.printer.Send("%*.0f|", distroCol, math.Pow(2, float64(k)))
+				d.print(useGroup,"%*.0f|", distroCol, math.Pow(2, float64(k)))
 			}
 
 			for i := 0; i < scalerCol; i++ {
 				if int(v/scaler) >= i {
-					d.printer.Send("@")
+					d.print(useGroup,"@")
 				} else {
-					d.printer.Send(" ")
+					d.print(useGroup," ")
 				}
 			}
 
-			d.printer.Send("|%*d\n", countCol, v)
+			d.print(useGroup,"|%*d\n", countCol, v)
 		}
 	}
 }

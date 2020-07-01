@@ -9,6 +9,9 @@ const (
 	PrintStr = iota + 1
 	PrintLn
 	PrintExit
+	PrintGroupStart
+	PrintGroupStr
+	PrintGroupEnd
 )
 
 type PrintOp struct {
@@ -19,6 +22,7 @@ type PrintOp struct {
 
 type Printer struct {
 	incoming chan PrintOp
+	group	bool
 }
 
 func PrintInit() *Printer {
@@ -33,12 +37,31 @@ func (p *Printer) printWorker() {
 		op := <-p.incoming
 		switch op.OpType {
 		case PrintStr:
-			fmt.Printf(op.OpStr)
+			if p.group {
+				// Use an anonymous function to push the message back on the queue. If not done
+				// the channel can be full causing the print thread to stall and not remove other
+				// items from the queue to clear it.
+				go func() {
+					p.incoming <- op
+				}()
+			} else {
+				fmt.Printf(op.OpStr)
+			}
 		case PrintLn:
-			fmt.Println()
+			if p.group {
+				p.incoming <- op
+			} else {
+				fmt.Println()
+			}
 		case PrintExit:
 			op.OpChan <- 1
 			break
+		case PrintGroupStart:
+			p.group = true
+		case PrintGroupEnd:
+			p.group = false
+		case PrintGroupStr:
+			fmt.Printf(op.OpStr)
 		}
 	}
 }

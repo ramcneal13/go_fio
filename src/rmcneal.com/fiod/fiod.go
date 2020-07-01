@@ -90,7 +90,7 @@ func main() {
 		}
 
 		track.SetTitle("Preparing")
-		if len(perBarrier) < 5 {
+		if len(perBarrier) < 10 {
 			track.DisplayExtra()
 		} else {
 			track.DisplayCount()
@@ -105,9 +105,11 @@ func main() {
 					printer.Send("\nERROR: [%s] %s\n", job.GetName(), err)
 					return false
 				}
-			}, func() { job.Stop() })
+			}, func() { job.AbortPrep() })
 		}
-		track.WaitForThreads()
+		if !track.WaitForThreads() {
+			break
+		}
 		track.DisplayReset()
 
 		// Clear out the stats just before starting the jobs. The timer is running

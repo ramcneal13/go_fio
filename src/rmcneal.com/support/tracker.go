@@ -1,3 +1,4 @@
+
 package support
 
 import (
@@ -80,7 +81,9 @@ func (t *tracking) DisplayReset() {
 	t.display = emptyDisplayFunc
 }
 
-func (t *tracking) WaitForThreads() {
+func (t *tracking) WaitForThreads() bool {
+	returnState := true
+
 	intrChans := make(chan os.Signal, 1)
 	signal.Notify(intrChans, os.Interrupt, os.Kill)
 
@@ -88,6 +91,13 @@ func (t *tracking) WaitForThreads() {
 	for t.count > 0 {
 		select {
 		case status := <-t.completeChan:
+			if !status.okay {
+				// If functions returns an error need to consider everything an
+				// error. This is most likely to occur because of either an I/O
+				// error or the user pressed control-C during the prepare phase
+				// in an attempt to stop the run early.
+				returnState = false
+			}
 			t.removeNode(status.name)
 
 		case <-tSec:
@@ -106,6 +116,7 @@ func (t *tracking) WaitForThreads() {
 	}
 	t.printer.Send("%*s\r%s ... done\n", cols-1, "", t.title)
 
+	return returnState
 }
 
 func (t *tracking) displayTrack() {

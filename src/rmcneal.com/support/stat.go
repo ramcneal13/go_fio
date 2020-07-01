@@ -260,7 +260,8 @@ func (s *StatsState) StatsDump() {
 	forceRaw := false
 	runTime := time.Now().Sub(s.StartTime)
 
-	s.latency.Graph()
+	s.groupPrintStart()
+	s.latency.Graph(true)
 
 	if s.ReadIOPS != 0 {
 		s.ReadLatAvg = s.ReadLatAvg / time.Duration(s.ReadIOPS)
@@ -281,26 +282,26 @@ func (s *StatsState) StatsDump() {
 	highCol := s.findColWidth("High")
 
 	if int64(runTime.Seconds()) > 0 {
-		s.printer.Send("%*sSummary\n", typeCol+(((lowCol+avgCol+highCol+4)-len("Summary"))/2), "")
-		s.printer.Send("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
-		s.printer.Send("%*s |%*s|%*s|%*s|\n", typeCol, "", lowCol, "Low", avgCol, "Avg", highCol, "High")
-		s.printer.Send("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
+		s.groupPrint("%*sSummary\n", typeCol+(((lowCol+avgCol+highCol+4)-len("Summary"))/2), "")
+		s.groupPrint("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
+		s.groupPrint("%*s |%*s|%*s|%*s|\n", typeCol, "", lowCol, "Low", avgCol, "Avg", highCol, "High")
+		s.groupPrint("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
 		if s.ReadIOPS != 0 {
-			s.printer.Send("%*s |%*s|%*s|%*s|\n",
+			s.groupPrint("%*s |%*s|%*s|%*s|\n",
 				typeCol, "Read",
 				lowCol, s.ReadLatLow,
 				avgCol, s.ReadLatAvg,
 				highCol, s.ReadLatHigh)
 		}
 		if s.WriteIOPS != 0 {
-			s.printer.Send("%*s |%*s|%*s|%*s|\n",
+			s.groupPrint("%*s |%*s|%*s|%*s|\n",
 				typeCol, "Write",
 				lowCol, s.WriteLatLow,
 				avgCol, s.WriteLatAvg,
 				highCol, s.WriteLatHigh)
 		}
-		s.printer.Send("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
-		s.printer.Send("IOPS: %s, Time: %s, Bandwidth: %s (r:%s,w:%s)\n",
+		s.groupPrint("%*s %s\n", typeCol, "", DashLine(lowCol, avgCol, highCol))
+		s.groupPrint("IOPS: %s, Time: %s, Bandwidth: %s (r:%s,w:%s)\n",
 			Humanize(s.Iops/int64(runTime.Seconds()), 1),
 			runTime,
 			Humanize((s.ReadBW+s.WriteBW)/int64(runTime.Seconds()), 1),
@@ -311,7 +312,20 @@ func (s *StatsState) StatsDump() {
 	}
 
 	if s.gcfg.Verbose || forceRaw {
-		s.printer.Send("IO's(read=%d,write=%d), Bytes xfer'd(read=%d,write=%d)\n", s.ReadIOPS, s.WriteIOPS,
+		s.groupPrint("IO's(read=%d,write=%d), Bytes xfer'd(read=%d,write=%d)\n", s.ReadIOPS, s.WriteIOPS,
 			s.ReadBW, s.WriteBW)
 	}
+	s.groupPrintEnd()
+}
+
+func (s *StatsState) groupPrintStart() {
+	s.printer.incoming <- PrintOp{PrintGroupStart, "", nil}
+}
+
+func (s *StatsState) groupPrintEnd() {
+	s.printer.incoming <- PrintOp{PrintGroupEnd, "", nil}
+}
+
+func (s *StatsState) groupPrint(format string, a ...interface{}) {
+	s.printer.incoming <- PrintOp{PrintGroupStr, fmt.Sprintf(format, a...), nil}
 }
