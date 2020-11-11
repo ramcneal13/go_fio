@@ -54,6 +54,7 @@ func init() {
 		"logsense": scsiLogSenseCommand,
 		"readcap": scsiReadCapCommand,
 		"diskinfo": diskInfo,
+		"tcg": sedCommand,
 	}
 }
 func main() {
