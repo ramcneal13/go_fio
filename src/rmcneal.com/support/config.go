@@ -369,7 +369,7 @@ func (j *JobData) validate(section string) error {
 	}
 
 	if j.Reset_Buf == 0 {
-		j.Reset_Buf = 1
+		j.Reset_Buf = 10000
 	}
 	return nil
 }

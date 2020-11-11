@@ -44,7 +44,8 @@ func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 	senseBuf := make([]byte, 256)
 	cmd.flags = flags
 	switch cdb[0] {
-	case 0x12:
+	case 0x12: // INQUIRY
+	case 0xa2: // SECURITY_PROTOCOL_IN
 		cmd.flags |= UscsiRead
 	}
 	cmd.timeout = 30

@@ -351,6 +351,16 @@ func (j *Job) fileFill(tracker *tracking) {
 	j.patternFill(buf)
 	j.threadRun = true
 
+	// Make sure when filling the file for the first time to use unique data
+	// in every block. This will prevent file systems like ZFS from collapsing
+	// the blocks to nothing and just a meta data reference. The aim is to
+	// cause file systems to actually read data from the file system.
+	savedResetCnt := j.JobParams.Reset_Buf
+	j.JobParams.Reset_Buf = 1
+	defer func () {
+		j.JobParams.Reset_Buf = savedResetCnt
+	}()
+
 	go func() {
 		var curBlock int64
 		for curBlock = int64(0); (curBlock + fillSize) <= lastBlock; curBlock += fillSize {

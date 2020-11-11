@@ -101,6 +101,19 @@ func (d *dataToInt) getInt64() int64 {
 	return val
 }
 
+type bitMaskBitDump struct {
+	byteOffset	byte
+	rightShift	uint8
+	mask		byte
+	name		string
+}
+
+type multiByteDump struct {
+	byteOffset	int
+	numberBytes	int
+	name		string
+}
+
 func doBitDump(table []bitMaskBitDump, data []byte) {
 	outputCols := 4
 	fmt.Printf("    ")

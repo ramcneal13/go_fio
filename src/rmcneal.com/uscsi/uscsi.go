@@ -7,18 +7,6 @@ import (
 	"strings"
 )
 
-type bitMaskBitDump struct {
-	byteOffset	byte
-	rightShift	uint8
-	mask		byte
-	name		string
-}
-
-type multiByteDump struct {
-	byteOffset	int
-	numberBytes	int
-	name		string
-}
 
 var inputDevice string
 var pageRequest int
