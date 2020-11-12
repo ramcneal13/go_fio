@@ -114,6 +114,28 @@ type multiByteDump struct {
 	name		string
 }
 
+func htons(hd uint16) uint16 {
+	return (hd >> 8) | ((hd & 0xff) << 8)
+}
+
+func ntohs(nd uint16) uint16 {
+	return htons(nd)
+}
+
+func Append(slice, data []byte) []byte {
+	l := len(slice)
+	if l + len(data) > cap(slice) {  // reallocate
+		// Allocate double what's needed, for future growth.
+		newSlice := make([]byte, (l+len(data))*2)
+		// The copy function is predeclared and works for any slice type.
+		copy(newSlice, slice)
+		slice = newSlice
+	}
+	slice = slice[0:l+len(data)]
+	copy(slice[l:], data)
+	return slice
+}
+
 func doBitDump(table []bitMaskBitDump, data []byte) {
 	outputCols := 4
 	fmt.Printf("    ")
@@ -138,7 +160,7 @@ func doMultiByteDump(table []multiByteDump, data []byte) {
 	for _, mb := range table {
 		converter := dataToInt{data, mb.byteOffset, mb.numberBytes}
 		val := converter.getInt64()
-		fmt.Printf("  | %-*s | %d", longestStr, mb.name, val)
+		fmt.Printf("  | %-*s | 0x%x", longestStr, mb.name, val)
 		if val > 10000 {
 			fmt.Printf(" (%s)", support.Humanize(val, 1))
 		}
