@@ -172,3 +172,66 @@ func doMultiByteDump(table []multiByteDump, data []byte) {
 func dumpASCII(data []byte, offset int, count int) string {
 	return bytes.NewBuffer(data[offset:offset + count]).String()
 }
+
+type comPacket struct {
+	header []byte
+	payload []byte
+	subpacket []byte
+}
+
+func createPacket() *comPacket {
+	pd := &comPacket{}
+	pd.header = make([]byte, 20)
+	pd.payload = make([]byte, 24)
+	pd.subpacket = make([]byte, 12)
+
+	return pd
+}
+
+func (p *comPacket) putIntInHeader(val uint32, offset int) {
+	intAtData(p.header, val, offset)
+}
+
+func (p *comPacket) putShortInHeader(val uint16, offset int) {
+	shortAtData(p.header, val, offset)
+}
+
+func (p *comPacket) putIntInPayload(val uint32, offset int) {
+	intAtData(p.payload, val, offset)
+}
+
+func (p *comPacket) putShortInPayload(val uint16, offset int) {
+	shortAtData(p.payload, val, offset)
+}
+
+func (p *comPacket) putIntInSub(val uint32, offset int) {
+	intAtData(p.subpacket, val, offset)
+}
+
+func (p *comPacket) putShortInSub(val uint16, offset int) {
+	shortAtData(p.subpacket, val, offset)
+}
+
+func (p *comPacket) addShortToSub(val uint16) {
+	p.subpacket = append(p.subpacket, (byte)((val >> 8) & 0xff))
+	p.subpacket = append(p.subpacket, (byte)(val & 0xff))
+}
+
+func (p *comPacket) addIntToSub(val uint32) {
+	p.subpacket = append(p.subpacket, (byte)((val >> 24) & 0xff))
+	p.subpacket = append(p.subpacket, (byte)((val >> 16) & 0xff))
+	p.subpacket = append(p.subpacket, (byte)((val >> 8) & 0xff))
+	p.subpacket = append(p.subpacket, (byte)(val & 0xff))
+}
+
+func intAtData(data []byte, val uint32, offset int) {
+	data[offset] = (byte)((val >> 24) & 0xff)
+	data[offset+1] = (byte)((val >> 16) & 0xff)
+	data[offset+2] = (byte)((val >> 8) & 0xff)
+	data[offset+3] = (byte)(val & 0xff)
+}
+
+func shortAtData(data []byte, val uint16, offset int) {
+	data[offset] = (byte)((val >> 8) & 0xff)
+	data[offset+1] = (byte)(val & 0xff)
+}
