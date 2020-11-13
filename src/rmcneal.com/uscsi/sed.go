@@ -11,6 +11,7 @@ type tcgData struct {
 	lockingEnabled	bool
 	lockingSupported bool
 	comID      uint16
+	sequenceNum	uint32
 }
 
 func sedCommand(fp *os.File) {
@@ -23,7 +24,8 @@ func sedCommand(fp *os.File) {
 
 	// Default to the device being an Opal device. It may not provide
 	// a feature code page 0x203 during Level 0 Discovery
-	tcgGlobal := &tcgData{true,false,false,false,0}
+	tcgGlobal := &tcgData{true,false,false,false,
+	0, 0}
 
 	cdb[0] = 0xa2
 	cdb[1] = 1		// Protocol 1 == Discovery
@@ -81,83 +83,154 @@ func sedCommand(fp *os.File) {
 	}
 
 	fmt.Printf("ComID: 0x%x\n", tcgGlobal.comID)
-	openSession(fp, tcgGlobal.comID)
+	if openSession(fp, tcgGlobal) {
+		fmt.Printf("Session okay\n")
+		getRandom(fp, tcgGlobal)
+		closeSession(fp, tcgGlobal)
+	} else {
+		resetSession(fp, tcgGlobal)
+		fmt.Printf("Session didn't open\n")
+	}
 }
 
-func openSession(fp *os.File, comID uint16) {
+func resetSession(fp *os.File, g *tcgData) {
+	cdb := make([]byte, 12)
+	data := make([]byte, 12)
+	cdb[0] = 0xb5
+	cdb[1] = 2
+	shortAtData(cdb, 4, 2)
 
-	packet := createPacket()
-	packet.putShortInHeader(comID, 4)
+	if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
+		fmt.Printf("Reset failed\n")
+	} else {
+		fmt.Printf("Reset worked\n")
+	}
+}
 
-	// 24 is the fixed size of the payload in the comPacket
-	totalLen := uint32(24)
-	packet.putIntInPayload(1, 0) // TSN
-	packet.putIntInPayload(1, 4) // HSN
-	packet.putIntInPayload(1, 8) // Sequence number
-
-	packet.addIntToSub(0)   // Reserved
-	packet.addShortToSub(0) // Reserved
-	packet.addShortToSub(0) // SubPacket Kind: 0 == data
-	packet.addIntToSub(0)   // Length for now,
+func getRandom(fp *os.File, g *tcgData) bool {
+	pkt := createPacket(g, "Get Random")
 
 	// Call Token
-	packet.subpacket = append(packet.subpacket, 0xf8)
+	pkt.subpacket = append(pkt.subpacket, 0xf8)
 
 	// InvokingID
-	packet.addIntToSub(0)
-	packet.addIntToSub(0xff)
+	pkt.addIntToSub(0)
+	pkt.addIntToSub(0xff)
 
 	// MethodID
-	packet.addIntToSub(0)
-	packet.addIntToSub(0xff02)
+	pkt.addIntToSub(0x00000006)
+	pkt.addIntToSub(0x00000601)
 
 	// End of Data Token
-	packet.subpacket = append(packet.subpacket, 0xf9)
+	pkt.addByteToSub(0xf9)
 
 	// Status Code List
-	packet.subpacket = append(packet.subpacket, 0xf0)	// Start List
-	packet.subpacket = append(packet.subpacket, 0)
-	packet.subpacket = append(packet.subpacket, 0xf1)	// End List
+	pkt.addByteToSub(0xf0)
+	pkt.addByteToSub(0)
+	pkt.addByteToSub(0xf1)
 
-	if len(packet.subpacket) % 4 != 0 {
-		bytesToAdd := 4 - (len(packet.subpacket) % 4)
-		for ; bytesToAdd > 0; bytesToAdd-- {
-			packet.subpacket = append(packet.subpacket, 0)
-		}
-	}
-	subLen := (uint32)(len(packet.subpacket))
-	packet.putIntInSub(subLen - 12, 8)
+	pkt.fini()
 
-	totalLen += subLen
-	packet.putIntInPayload(subLen, 20)
-
-	packet.putIntInHeader(totalLen, 16)
-	fmt.Printf("Header len: %d, payload len: %d, sub packet len: %d\n", len(packet.header),
-		len(packet.payload), len(packet.subpacket))
-
-	full := make([]byte, 0, 64)
-	full = Append(full, packet.header)
-	full = Append(full, packet.payload)
-	full = Append(full, packet.subpacket)
-	dumpMemory(full, len(full), "")
+	full := pkt.getFullPayload()
 
 	cdb := make([]byte, 12)
 	cdb[0] = 0xb5
 	cdb[1] = 1
-	shortAtData(cdb, comID, 2)
+	shortAtData(cdb, g.comID, 2)
 	intAtData(cdb, (uint32)(len(full)), 6)
 
 	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		fmt.Printf("Open session failed: err=%s\n", err)
+		return false
 	} else {
-		fmt.Printf("SECURITY_PROTOCOL_OUT: okay\n")
 		cdb[0] = 0xa2
 		if dataLen, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-			fmt.Printf("SECURITY_PROTOCOL_IN: err=%s\n", err)
+			fmt.Printf("Failed to read Random results\n")
+			return false
 		} else {
-			fmt.Printf("Reply data len: %d\n", dataLen)
+			fmt.Printf("Random results: len=%d\n", dataLen)
 			dumpMemory(full, dataLen, "  ")
+			return true
 		}
+	}
+}
+
+func openSession(fp *os.File, g *tcgData) bool {
+
+	pkt := createPacket(g, "Open Session")
+
+	// Call Token
+	pkt.addByteToSub(0xf8)
+
+	// InvokingID
+	pkt.addIntToSub(0)
+	pkt.addIntToSub(0xff)
+
+	// MethodID
+	pkt.addIntToSub(0)
+	pkt.addIntToSub(0xff02)
+
+	// End of Data Token
+	pkt.addByteToSub(0xf9)
+
+	// Status Code List
+	pkt.addByteToSub(0xf0)
+	pkt.addByteToSub(0)
+	pkt.addByteToSub(0xf1)
+
+	pkt.fini()
+
+	full := pkt.getFullPayload()
+
+	cdb := make([]byte, 12)
+	cdb[0] = 0xb5
+	cdb[1] = 1
+	shortAtData(cdb, g.comID, 2)
+	intAtData(cdb, (uint32)(len(full)), 6)
+
+	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
+		return false
+	} else {
+		return true
+	}
+}
+
+func closeSession(fp *os.File, g *tcgData) bool {
+
+	pkt := createPacket(g, "Close Session")
+
+	// Call Token
+	pkt.addByteToSub(0xf8)
+
+	// InvokingID
+	pkt.addIntToSub(0)
+	pkt.addIntToSub(0xff)
+
+	// MethodID
+	pkt.addIntToSub(0)
+	pkt.addIntToSub(0xff06)
+
+	// End of Data Token
+	pkt.addByteToSub(0xf9)
+
+	// Status Code List
+	pkt.addByteToSub(0xf0)
+	pkt.addByteToSub(0)
+	pkt.addByteToSub(0xf1)
+
+	pkt.fini()
+
+	full := pkt.getFullPayload()
+
+	cdb := make([]byte, 12)
+	cdb[0] = 0xb5
+	cdb[1] = 1
+	shortAtData(cdb, g.comID, 2)
+	intAtData(cdb, (uint32)(len(full)), 6)
+
+	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
+		return false
+	} else {
+		return true
 	}
 }
 

@@ -177,15 +177,61 @@ type comPacket struct {
 	header []byte
 	payload []byte
 	subpacket []byte
+	totalLen	uint32
+	description	string
 }
 
-func createPacket() *comPacket {
+func createPacket(g *tcgData, name string) *comPacket {
 	pd := &comPacket{}
+	pd.description = name
 	pd.header = make([]byte, 20)
 	pd.payload = make([]byte, 24)
 	pd.subpacket = make([]byte, 12)
 
+	pd.putShortInHeader(g.comID, 4)
+
+	// 24 is the fixed size of the payload in the comPacket
+	pd.totalLen = uint32(24)
+	pd.putIntInPayload(1, 0)             // TSN
+	pd.putIntInPayload(1, 4)             // HSN
+	pd.putIntInPayload(g.sequenceNum, 8) // Sequence number
+	g.sequenceNum++
+
+	pd.addIntToSub(0)   // Reserved
+	pd.addShortToSub(0) // Reserved
+	pd.addShortToSub(0) // SubPacket Kind: 0 == data
+	pd.addIntToSub(0)   // Length for now,
+
 	return pd
+}
+
+func (p *comPacket) fini() {
+	if len(p.subpacket) % 4 != 0 {
+		bytesToAdd := 4 - (len(p.subpacket) % 4)
+		for ; bytesToAdd > 0; bytesToAdd-- {
+			p.addByteToSub(0)
+		}
+	}
+	subLen := (uint32)(len(p.subpacket))
+	p.putIntInSub(subLen - 12, 8)
+
+	p.totalLen += subLen
+	p.putIntInPayload(subLen, 20)
+
+	p.putIntInHeader(p.totalLen, 16)
+}
+
+func (p *comPacket) getFullPayload() []byte {
+	full := make([]byte, 0, 64)
+	full = Append(full, p.header)
+	full = Append(full, p.payload)
+	full = Append(full, p.subpacket)
+
+	fmt.Printf("%s -- Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n", p.description,
+		len(p.header), len(p.payload), len(p.subpacket), len(full))
+	dumpMemory(full, len(full), "  ")
+
+	return full
 }
 
 func (p *comPacket) putIntInHeader(val uint32, offset int) {
@@ -210,6 +256,10 @@ func (p *comPacket) putIntInSub(val uint32, offset int) {
 
 func (p *comPacket) putShortInSub(val uint16, offset int) {
 	shortAtData(p.subpacket, val, offset)
+}
+
+func (p *comPacket) addByteToSub(val byte) {
+	p.subpacket = append(p.subpacket, val)
 }
 
 func (p *comPacket) addShortToSub(val uint16) {
