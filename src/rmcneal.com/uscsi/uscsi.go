@@ -15,6 +15,7 @@ var debugOutput bool
 var commandName string
 var scsiCommands map[string]func(*os.File)
 var showAll bool
+var sedOption string
 
 func init() {
 	const (
@@ -24,6 +25,7 @@ func init() {
 		usageEVPD= "Used to request page 0"
 		usageDebug= "Dump out raw data"
 		usageCommand= "Direct selection of command to run"
+		usageSED = "Subcommand for SED devices"
 	)
 	flag.StringVar(&inputDevice, "device", "", usage)
 	flag.StringVar(&inputDevice, "d", "", usage+" (shorthand)")
@@ -36,6 +38,8 @@ func init() {
 	flag.StringVar(&commandName, "command", "", usageCommand)
 	flag.StringVar(&commandName, "C", "", usageCommand+" (shorthand)")
 	flag.BoolVar(&showAll, "all", false, "show all pages")
+	flag.StringVar(&sedOption, "sed", "", usageSED)
+	flag.StringVar(&sedOption, "s", "", usageSED+ "(shorthand)")
 
 	scsiCommands = map[string]func(*os.File) {
 		"inquiry":  scsiInquiryCommand,

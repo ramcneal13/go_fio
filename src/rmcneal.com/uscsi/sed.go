@@ -14,10 +14,22 @@ type tcgData struct {
 	sequenceNum	uint32
 }
 
+type TcgInterface interface {
+	openSession() bool
+	closeSession() bool
+	setActivate() bool
+	getRandom() bool
+}
+
+type tcgDevice struct {
+	t TcgInterface
+}
+
 func sedCommand(fp *os.File) {
 
 	var cdb []byte
 	var data []byte
+	var tcgCurrent tcgDevice
 
 	cdb = make([]byte, 12)
 	data = make([]byte, 512)
@@ -45,7 +57,58 @@ func sedCommand(fp *os.File) {
 		dumpLevelZeroDiscovery(data, dataLen, tcgGlobal)
 	}
 
+	if tcgGlobal.lockingSupported {
+		if tcgGlobal.lockingEnabled {
+			fmt.Printf("Our work is done here. Locking supported and enabled")
+			return
+		}
+	} else {
+		fmt.Printf("Locking is not supported\n")
+		return
+	}
 	if tcgGlobal.opalDevice {
+		opalD := opalDevice{fp, tcgGlobal}
+		tcgCurrent = makeTCG(opalD)
+	} else if tcgGlobal.rubyDevice {
+		rubyD := rubyDevice{fp, tcgGlobal}
+		tcgCurrent = makeTCG(rubyD)
+	}
+
+	fmt.Printf("ComID: 0x%x\n", tcgGlobal.comID)
+	switch sedOption {
+	case "":
+		fmt.Printf("No command requested\n")
+
+	case "mgmt":
+		if !updateComID(fp, tcgGlobal) {
+			return
+		}
+		if tcgCurrent.t.openSession() {
+			tcgCurrent.t.setActivate()
+			tcgCurrent.t.closeSession()
+		}
+
+	case "random":
+		if !updateComID(fp, tcgGlobal) {
+			return
+		}
+		if tcgCurrent.t.openSession() {
+			tcgCurrent.t.getRandom()
+			tcgCurrent.t.closeSession()
+		}
+	}
+}
+
+func makeTCG(n TcgInterface) tcgDevice {
+	tcg := tcgDevice{n}
+	return tcg
+}
+
+func updateComID(fp *os.File, g *tcgData) bool {
+	cdb := make([]byte, 12)
+	data := make([]byte, 512)
+
+	if g.opalDevice && sedOption == "" {
 		cdb[0] = 0xa2
 		// Section 3.3.4.3.1 Storage Architecture Core Spec v2.01_r1.00
 		cdb[1] = 2             // Protocol ID 2 == GET_COMID
@@ -57,75 +120,129 @@ func sedCommand(fp *os.File) {
 
 		if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
 			fmt.Printf("USCSI Protocol 2 failed, err=%s\n", err)
-			return
+			return false
 		} else {
-			converter := dataToInt{data,0,2}
-			tcgGlobal.comID = uint16(converter.getInt())
+			converter := dataToInt{data, 0, 2}
+			g.comID = uint16(converter.getInt())
+			g.comID = 0x7fe
 		}
-	} else if tcgGlobal.rubyDevice {
-		if tcgGlobal.comID == 0 {
+	} else if g.opalDevice {
+		g.comID = 0x7fe
+	} else if g.rubyDevice {
+		if g.comID == 0 {
 			fmt.Printf("Failed to get Ruby ComID\n")
-			return
+			return false
 		}
 	} else {
 		fmt.Printf("Device type uknown\n")
-		return
+		g.comID = 0x7ffe
 	}
-
-	if tcgGlobal.lockingSupported {
-		if tcgGlobal.lockingEnabled {
-			fmt.Printf("Our work is done here. Locking supported and enabled")
-			return
-		}
-	} else {
-		fmt.Printf("Locking is not supported\n")
-		return
-	}
-
-	fmt.Printf("ComID: 0x%x\n", tcgGlobal.comID)
-	if openSession(fp, tcgGlobal) {
-		fmt.Printf("Session okay\n")
-		getRandom(fp, tcgGlobal)
-		closeSession(fp, tcgGlobal)
-	} else {
-		resetSession(fp, tcgGlobal)
-		fmt.Printf("Session didn't open\n")
-	}
+	return true
 }
 
-func resetSession(fp *os.File, g *tcgData) {
+type opalDevice struct {
+	fp *os.File
+	g *tcgData
+}
+
+func (o opalDevice) openSession() bool {
+	pkt := createPacket(o.g, "Open Session")
+
+	hardCoded := [...]byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02, 0xf0,
+		0x01, 0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x1,
+		0x01, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+
+	newBuf := make([]byte, 0, len(hardCoded))
+	for _, v := range hardCoded {
+		newBuf = append(newBuf, v)
+	}
+	pkt.subpacket = newBuf
+	pkt.fini()
+
+	full := pkt.getFullPayload()
+
 	cdb := make([]byte, 12)
-	data := make([]byte, 12)
 	cdb[0] = 0xb5
-	cdb[1] = 2
-	shortAtData(cdb, 4, 2)
+	cdb[1] = 1
+	shortAtData(cdb, o.g.comID, 2)
+	intAtData(cdb, (uint32)(len(full)), 6)
 
-	if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
-		fmt.Printf("Reset failed\n")
+	if _, err := sendUSCSI(o.fp, cdb, full, 0); err != nil {
+		fmt.Printf("Failed to open session for Opal device\n")
+		return false
 	} else {
-		fmt.Printf("Reset worked\n")
+		return true
 	}
 }
 
-func getRandom(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "Get Random")
+func (o opalDevice) closeSession() bool {
+	pkt := createPacket(o.g, "Close Session")
+
+	hardCoded := [...]byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xfa,
+	}
+	newBuf := make([]byte, 0, len(hardCoded))
+	for _, v := range hardCoded {
+		newBuf = append(newBuf, v)
+	}
+	pkt.subpacket = newBuf
+	pkt.fini()
+
+	full := pkt.getFullPayload()
+
+	cdb := make([]byte, 12)
+	cdb[0] = 0xb5
+	cdb[1] = 1
+	shortAtData(cdb, o.g.comID, 2)
+	intAtData(cdb, (uint32)(len(full)), 6)
+
+	if _, err := sendUSCSI(o.fp, cdb, full, 0); err != nil {
+		fmt.Printf("Failed to close session: %s\n", err)
+		return false
+	} else {
+		return true
+	}
+}
+
+func (o opalDevice) setActivate() bool {
+	fmt.Printf("open session for Opal not implemented\n")
+	return false
+}
+
+func (o opalDevice) getRandom() bool {
+	pkt := createPacket(o.g, "Get Random")
 
 	// Call Token
 	pkt.subpacket = append(pkt.subpacket, 0xf8)
 
 	// InvokingID
+	pkt.addByteToSub(0xa8)
 	pkt.addIntToSub(0)
-	pkt.addIntToSub(0xff)
+	pkt.addIntToSub(0x1)
 
 	// MethodID
+	pkt.addByteToSub(0xa8)
 	pkt.addIntToSub(0x00000006)
 	pkt.addIntToSub(0x00000601)
+
+	// Status Code List
+	pkt.addByteToSub(0xf0)
+	pkt.addByteToSub(0)
+	pkt.addByteToSub(0xf1)
 
 	// End of Data Token
 	pkt.addByteToSub(0xf9)
 
 	// Status Code List
 	pkt.addByteToSub(0xf0)
+	pkt.addByteToSub(0)
+	pkt.addByteToSub(0)
 	pkt.addByteToSub(0)
 	pkt.addByteToSub(0xf1)
 
@@ -136,14 +253,14 @@ func getRandom(fp *os.File, g *tcgData) bool {
 	cdb := make([]byte, 12)
 	cdb[0] = 0xb5
 	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
+	shortAtData(cdb, o.g.comID, 2)
 	intAtData(cdb, (uint32)(len(full)), 6)
 
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
+	if _, err := sendUSCSI(o.fp, cdb, full, 0); err != nil {
 		return false
 	} else {
 		cdb[0] = 0xa2
-		if dataLen, err := sendUSCSI(fp, cdb, full, 0); err != nil {
+		if dataLen, err := sendUSCSI(o.fp, cdb, full, 0); err != nil {
 			fmt.Printf("Failed to read Random results\n")
 			return false
 		} else {
@@ -154,29 +271,29 @@ func getRandom(fp *os.File, g *tcgData) bool {
 	}
 }
 
-func openSession(fp *os.File, g *tcgData) bool {
+type rubyDevice struct {
+	fp *os.File
+	g *tcgData
+}
 
-	pkt := createPacket(g, "Open Session")
+func (r rubyDevice) getRandom() bool {
+	fmt.Printf("Random not implemented for Ruby devices\n")
+	return false
+}
 
-	// Call Token
-	pkt.addByteToSub(0xf8)
+func (r rubyDevice) setActivate() bool {
+	pkt := createPacket(r.g, "Locking Activate")
 
-	// InvokingID
-	pkt.addIntToSub(0)
-	pkt.addIntToSub(0xff)
-
-	// MethodID
-	pkt.addIntToSub(0)
-	pkt.addIntToSub(0xff02)
-
-	// End of Data Token
-	pkt.addByteToSub(0xf9)
-
-	// Status Code List
-	pkt.addByteToSub(0xf0)
-	pkt.addByteToSub(0)
-	pkt.addByteToSub(0xf1)
-
+	hardCoded := [...]byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, 0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x02, 0xa8, 0x00, 0x00, 0x00, 0x06,
+		0x00, 0x00, 0x02, 0x03, 0xf0, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+	newBuf := make([]byte, 0, len(hardCoded))
+	for _, v := range hardCoded {
+		newBuf = append(newBuf, v)
+	}
+	pkt.subpacket = newBuf
 	pkt.fini()
 
 	full := pkt.getFullPayload()
@@ -184,38 +301,68 @@ func openSession(fp *os.File, g *tcgData) bool {
 	cdb := make([]byte, 12)
 	cdb[0] = 0xb5
 	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
+	shortAtData(cdb, r.g.comID, 2)
 	intAtData(cdb, (uint32)(len(full)), 6)
 
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
+	if _, err := sendUSCSI(r.fp, cdb, full, 0); err != nil {
+		fmt.Printf("Failed to set locking\n")
 		return false
 	} else {
 		return true
 	}
 }
 
-func closeSession(fp *os.File, g *tcgData) bool {
 
-	pkt := createPacket(g, "Close Session")
+func (r rubyDevice) openSession() bool {
 
-	// Call Token
-	pkt.addByteToSub(0xf8)
+	pkt := createPacket(r.g, "Open Session")
 
-	// InvokingID
-	pkt.addIntToSub(0)
-	pkt.addIntToSub(0xff)
+	hardCoded := [...]byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0xff, 0x02, 0xf0, 0x01, 0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, 0x1,
+		0xf2, 0x00, 0xd0, 0x12, 0x3c, 0x6e, 0x65, 0x77, 0x5f, 0x53, 0x49, 0x44, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f,
+		0x72, 0x64, 0x3e, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, 0xf3,
+		0xf1, 0xf9, 0xf0, 0x00,
+		0x00, 0x00, 0xf1,
+	}
 
-	// MethodID
-	pkt.addIntToSub(0)
-	pkt.addIntToSub(0xff06)
+	newBuf := make([]byte, 0, len(hardCoded))
+	for _, v := range hardCoded {
+		newBuf = append(newBuf, v)
+	}
+	pkt.subpacket = newBuf
+	pkt.fini()
 
-	// End of Data Token
-	pkt.addByteToSub(0xf9)
+	full := pkt.getFullPayload()
 
-	// Status Code List
-	pkt.addByteToSub(0xf0)
-	pkt.addByteToSub(0)
-	pkt.addByteToSub(0xf1)
+	cdb := make([]byte, 12)
+	cdb[0] = 0xb5
+	cdb[1] = 1
+	shortAtData(cdb, r.g.comID, 2)
+	intAtData(cdb, (uint32)(len(full)), 6)
+
+	if _, err := sendUSCSI(r.fp, cdb, full, 0); err != nil {
+		fmt.Printf("Failed to open session for Ruby device\n")
+		return false
+	} else {
+		return true
+	}
+}
+
+func (r rubyDevice) closeSession() bool {
+
+	pkt := createPacket(r.g, "Close Session")
+
+	hardCoded := [...]byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xfa,
+	}
+	newBuf := make([]byte, 0, len(hardCoded))
+	for _, v := range hardCoded {
+		newBuf = append(newBuf, v)
+	}
+	pkt.subpacket = newBuf
 
 	pkt.fini()
 
@@ -224,10 +371,10 @@ func closeSession(fp *os.File, g *tcgData) bool {
 	cdb := make([]byte, 12)
 	cdb[0] = 0xb5
 	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
+	shortAtData(cdb, r.g.comID, 2)
 	intAtData(cdb, (uint32)(len(full)), 6)
 
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
+	if _, err := sendUSCSI(r.fp, cdb, full, 0); err != nil {
 		return false
 	} else {
 		return true

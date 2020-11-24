@@ -24,7 +24,10 @@ var protocolIndentifier = map[byte]string{
 func hexDump(buf []byte, n int, offset int64, offsetWidth int) {
 	fmt.Printf("%0*x: ", offsetWidth, offset)
 	for byteIndex := 0; byteIndex < n; byteIndex += 1 {
-		fmt.Printf("%02x ", buf[byteIndex])
+		fmt.Printf("%02x", buf[byteIndex])
+		if (byteIndex % 4) == 3 {
+			fmt.Printf(" ")
+		}
 	}
 }
 
@@ -39,16 +42,47 @@ func asciiDump(buf []byte, n int) {
 	}
 }
 
+func isLineZeros(buf []byte, n int) bool {
+	for byteIndex := 0; byteIndex < n; byteIndex += 1 {
+		if buf[byteIndex] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func dumpMemory(buf []byte, n int, prefix string) {
 	ow := 8
+	lastLineZero := false
+	printContinue := true
 	if n < 0x100 {
 		ow = 2
 	} else if n < 0x10000 {
 		ow = 4
 	}
-	for offset := int64(0); offset < int64(n); offset += 16 {
+	for offset := 0; offset < n; offset += 16 {
+		if isLineZeros(buf[offset:], min(16, n-offset)) {
+			// Even if the last couple of lines in the buffer are zero print out
+			// the last line which shows the offset and contents .
+			if offset+16 >= n {
+				lastLineZero = false
+			}
+
+			if lastLineZero {
+				if printContinue {
+					fmt.Printf("%s        ....\n", prefix)
+					printContinue = false
+				}
+				continue
+			} else {
+				lastLineZero = true
+			}
+		} else {
+			lastLineZero = false
+			printContinue = true
+		}
 		fmt.Printf("%s", prefix)
-		dumpLine(buf[offset:], min(16, int(int64(n)-offset)), offset, ow)
+		dumpLine(buf[offset:], min(16, n-offset), int64(offset), ow)
 	}
 }
 
@@ -186,26 +220,23 @@ func createPacket(g *tcgData, name string) *comPacket {
 	pd.description = name
 	pd.header = make([]byte, 20)
 	pd.payload = make([]byte, 24)
-	pd.subpacket = make([]byte, 12)
 
 	pd.putShortInHeader(g.comID, 4)
 
 	// 24 is the fixed size of the payload in the comPacket
 	pd.totalLen = uint32(24)
-	pd.putIntInPayload(1, 0)             // TSN
-	pd.putIntInPayload(1, 4)             // HSN
+	pd.putIntInPayload(0, 0)             // TSN
+	pd.putIntInPayload(0, 4)             // HSN
 	pd.putIntInPayload(g.sequenceNum, 8) // Sequence number
 	g.sequenceNum++
-
-	pd.addIntToSub(0)   // Reserved
-	pd.addShortToSub(0) // Reserved
-	pd.addShortToSub(0) // SubPacket Kind: 0 == data
-	pd.addIntToSub(0)   // Length for now,
 
 	return pd
 }
 
 func (p *comPacket) fini() {
+	// The subpacket length must not contain the pad bytes.
+	p.putIntInSub((uint32)(len(p.subpacket)) - 12, 8)
+
 	if len(p.subpacket) % 4 != 0 {
 		bytesToAdd := 4 - (len(p.subpacket) % 4)
 		for ; bytesToAdd > 0; bytesToAdd-- {
@@ -213,7 +244,6 @@ func (p *comPacket) fini() {
 		}
 	}
 	subLen := (uint32)(len(p.subpacket))
-	p.putIntInSub(subLen - 12, 8)
 
 	p.totalLen += subLen
 	p.putIntInPayload(subLen, 20)
@@ -222,10 +252,12 @@ func (p *comPacket) fini() {
 }
 
 func (p *comPacket) getFullPayload() []byte {
-	full := make([]byte, 0, 64)
+	full := make([]byte, 0, 512)
 	full = Append(full, p.header)
 	full = Append(full, p.payload)
 	full = Append(full, p.subpacket)
+	padding := make([]byte, 512 - len(full))
+	full = Append(full, padding)
 
 	fmt.Printf("%s -- Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n", p.description,
 		len(p.header), len(p.payload), len(p.subpacket), len(full))
