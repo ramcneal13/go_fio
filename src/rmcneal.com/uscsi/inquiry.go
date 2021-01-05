@@ -76,13 +76,6 @@ func scsiInquiryCommand(fp *os.File) {
 	}
 
 	if data, length, err := scsiInquiry(fp, evpd, byte(pageRequest)); err == nil {
-		if debugOutput {
-			fmt.Printf("DataIn:\n")
-			for offset := 0; offset < length; offset += 16 {
-				curLen := min(16, length-offset)
-				dumpLine(data[offset:], curLen, int64(offset), 4)
-			}
-		}
 
 		converter := dataToInt{data, 2,2}
 		if converter.getInt() + 4 < length {
@@ -143,10 +136,6 @@ func scsiInquiry(fp *os.File, evpd byte, pageCode byte) ([]byte, int, error) {
 	cdb[1] = evpd
 	cdb[2] = pageCode
 	cdb[4] = 0xff
-	if debugOutput {
-		fmt.Printf("CDB:\n")
-		dumpLine(cdb, len(cdb), 0, 2)
-	}
 
 	dataLen, err := sendUSCSI(fp, cdb, data, 0)
 

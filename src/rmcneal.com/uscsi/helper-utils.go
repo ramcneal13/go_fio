@@ -118,13 +118,13 @@ func (d *dataToInt) setBuf(b []byte) {
 	d.buf = b
 }
 
-func (d *dataToInt) getInt() int {
-	return int(d.getInt64())
-}
-
 func (d *dataToInt) setOffsetCount(offset int, count int) {
 	d.offset = offset
 	d.count = count
+}
+
+func (d *dataToInt) getInt() int {
+	return int(d.getInt64())
 }
 
 func (d *dataToInt) getInt64() int64 {
@@ -225,10 +225,10 @@ func createPacket(g *tcgData, name string) *comPacket {
 
 	// 24 is the fixed size of the payload in the comPacket
 	pd.totalLen = uint32(24)
-	pd.putIntInPayload(0, 0)             // TSN
-	pd.putIntInPayload(0, 4)             // HSN
-	pd.putIntInPayload(g.sequenceNum, 8) // Sequence number
+	pd.putIntInPayload(g.spSessionID, 0) // TSN
+	pd.putIntInPayload(1, 4)             // HSN
 	g.sequenceNum++
+	pd.putIntInPayload(g.sequenceNum, 8) // Sequence number
 
 	return pd
 }
@@ -259,7 +259,7 @@ func (p *comPacket) getFullPayload() []byte {
 	padding := make([]byte, 512 - len(full))
 	full = Append(full, padding)
 
-	fmt.Printf("%s -- Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n", p.description,
+	fmt.Printf("  Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n",
 		len(p.header), len(p.payload), len(p.subpacket), len(full))
 	dumpMemory(full, len(full), "  ")
 
@@ -304,6 +304,17 @@ func (p *comPacket) addIntToSub(val uint32) {
 	p.subpacket = append(p.subpacket, (byte)((val >> 16) & 0xff))
 	p.subpacket = append(p.subpacket, (byte)((val >> 8) & 0xff))
 	p.subpacket = append(p.subpacket, (byte)(val & 0xff))
+}
+
+func longAtData(data []byte, val uint64, offset int) {
+	data[offset] = (byte)((val >> 56) & 0xff)
+	data[offset+1] = (byte)((val >> 48) & 0xff)
+	data[offset+2] = (byte)((val >> 40) & 0xff)
+	data[offset+3] = (byte)((val >> 32) & 0xff)
+	data[offset+4] = (byte)((val >> 24) & 0xff)
+	data[offset+5] = (byte)((val >> 16) & 0xff)
+	data[offset+6] = (byte)((val >> 8) & 0xff)
+	data[offset+7] = (byte)(val & 0xff)
 }
 
 func intAtData(data []byte, val uint32, offset int) {

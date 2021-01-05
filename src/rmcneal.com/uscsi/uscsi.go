@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+const (
+	INQUIRY            = 0x12
+	SECURITY_PROTO_IN  = 0xa2
+	SECURITY_PROTO_OUT = 0xb5
+)
 
 var inputDevice string
 var pageRequest int
@@ -80,6 +85,8 @@ func main() {
 		 */
 		 if fp, err = os.Open("/dev/rdsk/"+inputDevice); err == nil {
 		 	inputDevice = "/dev/rdsk/"+inputDevice
+		 } else if fp, err = os.Open("/dev/rdsk/" + inputDevice + "p0"); err == nil {
+			 inputDevice = "/dev/rdsk/" + inputDevice + "p0"
 		 } else {
 			 fmt.Printf("%s\n", err)
 			 os.Exit(1)
