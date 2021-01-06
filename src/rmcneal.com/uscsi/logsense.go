@@ -440,7 +440,7 @@ func decodeLogPage18(fp *os.File, data []byte, dataLen int) {
 
 func decodePortLog(data []byte) int {
 	paramLen := int(data[3])
-	fmt.Printf("  Protocol Identifer: %s\n", protocolIndentifier[data[4]&0xf])
+	fmt.Printf("  Protocol Identifer: %s\n", protocolIdentifier[data[4]&0xf])
 	dumpMemory(data[5:], paramLen-1, "    ")
 
 	return paramLen + 4

@@ -65,7 +65,7 @@ func diskInfo(fp *os.File) {
 	 * The noPostProcessing flag is just to see how much using threads helped
 	 * or hurt. On a system with about 75 drives this diskinfo takes 1.4 seconds
 	 * when using the go routines and 2 seconds for straight processing of each
-	 * drive. The installed 'diskinfo' command takes a whomping 4+ seconds.
+	 * drive. The installed 'diskinfo' command takes a whooping 4+ seconds.
 	 */
 	if noPostProcessing {
 		for _, name := range diskList {

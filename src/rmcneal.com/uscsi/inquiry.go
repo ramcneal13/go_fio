@@ -12,16 +12,16 @@ type inquiryNameAndFunc struct {
 	decode func([]byte, int)
 }
 
-var pageCodeFuncs map[byte]inquiryNameAndFunc
+var pageCodeFunctions map[byte]inquiryNameAndFunc
 
 func init() {
 	/*
 	 * Most of the tables can be simply declared and initialized as a global. pageCodeFuns
 	 * is special because the map references decodeInquiryPage00 and the method decodeInquiryPage00
-	 * references pageCodeFuncs which causes an initialization loop for the compiler. So,
+	 * references pageCodeFunctions which causes an initialization loop for the compiler. So,
 	 * initialize the map here.
 	 */
-	pageCodeFuncs = map[byte]inquiryNameAndFunc{
+	pageCodeFunctions = map[byte]inquiryNameAndFunc{
 		0x00: {"Supported VPD Pages", decodeInquiryPage00},
 		0x80: {"Unit Serial Number", decodeInquiryPage80},
 		0x82: {"ASCII implemented operating definition", decodeInquiryPage82},
@@ -31,13 +31,13 @@ func init() {
 		0x88: {"SCSI Ports", decodeInquiryPage88},
 		0x89: {"ASCII Information", decodeInquiryPage89},
 		0x8a: {"Power Condition", decodeInquiryPage8A},
-		0x8d: {"Power Consumption", decodeInquriyPage8D},
+		0x8d: {"Power Consumption", decodeInquiryPage8D},
 		0x90: {"Protocol Specific Logical Unit Information", decodeInquiryPage90},
 		0x91: {"Protocol Specific Port Information", decodeInquiryPage91},
 		0xb0: {"Block Limits", decodeInquiryPageB0},
 		0xb1: {"Block Device Characteristics", decodeInquiryPageB1},
 		0xb2: {"Logical Block Provisioning", decodeInquiryPageB2},
-		0xb5: {"Block Deivce Characteristics Extension", decodeInquiryPageB5},
+		0xb5: {"Block Device Characteristics Extension", decodeInquiryPageB5},
 		0xb7: {"Block Limits Extension", decodeInquiryPageB7},
 		0xc0: {"Firmware Numbers", decodeInquiryPageC0 },
 		0xc1: {"ETF Log Data Code", decodeInquiryPageC1},
@@ -92,7 +92,7 @@ func scsiInquiryCommand(fp *os.File) {
 						pageLength = converter.getInt() + 4
 					}
 
-					if naf, ok := pageCodeFuncs[data[byte(index)]]; ok {
+					if naf, ok := pageCodeFunctions[data[byte(index)]]; ok {
 						fmt.Printf("Page 0x%x: %s\n", data[byte(index)], naf.name)
 						if naf.decode != nil {
 							naf.decode(pageData, pageLength)
@@ -106,7 +106,7 @@ func scsiInquiryCommand(fp *os.File) {
 		} else {
 			if evpd == 1 {
 				page := byte(pageRequest)
-				if naf, ok := pageCodeFuncs[page]; ok {
+				if naf, ok := pageCodeFunctions[page]; ok {
 					fmt.Printf("%s\n", naf.name)
 					if naf.decode != nil {
 						naf.decode(data, length)
@@ -214,7 +214,7 @@ func decodeInquiryPage00(data []byte, dataLen int) {
 	pageDescriptor = "Unknown -- raw data output"
 	longestTitle := len(pageDescriptor)
 	for index := 4; index < dataLen; index++ {
-		if naf, ok := pageCodeFuncs[data[index]]; ok {
+		if naf, ok := pageCodeFunctions[data[index]]; ok {
 			longestTitle = max(longestTitle, len(naf.name))
 		}
 	}
@@ -223,7 +223,7 @@ func decodeInquiryPage00(data []byte, dataLen int) {
 	fmt.Printf("    %4s | %-*s | %s\n", "Page", longestTitle, "Title", supportedTitle)
 	fmt.Printf("  %s\n", support.DashLine(6, longestTitle+2, len(supportedTitle)+2))
 	for index := 4; index < dataLen; index += 1 {
-		if naf, ok = pageCodeFuncs[data[index]]; ok {
+		if naf, ok = pageCodeFunctions[data[index]]; ok {
 			pageDescriptor = naf.name
 			if naf.decode == nil {
 				supportedPage = "(not yet)"
@@ -278,7 +278,7 @@ var NAAField = map[byte]string{
 	0x2: "IEEE Extended",
 	0x3: "Locally Assigned",
 	0x5: "IEEE Registered",
-	0x6: "IEEE Registered Extened",
+	0x6: "IEEE Registered Extended",
 }
 
 var codeSet = map[byte]string{
@@ -301,7 +301,7 @@ func designationDescDecode(data []byte) int {
 		} else {
 			fmt.Printf("  Addressed Logic Unit Designator\n")
 		}
-		fmt.Printf("  Protocol Indentifer: %s\n", protocolIndentifier[data[0]>>4])
+		fmt.Printf("  Protocol Indentifer: %s\n", protocolIdentifier[data[0]>>4])
 	}
 	fmt.Printf("  Designator Type: %s, code_set: %s\n", designatorType[data[1]&0xf], codeSet[data[0]&0xf])
 	switch data[1] & 0xf {
@@ -415,7 +415,7 @@ func decodeSCSIPort(data []byte) int {
 
 func decodeTargetPort(data []byte, offset int) int {
 	targetPortLength := int(data[3])
-	fmt.Printf("    Protocol: %s\n", protocolIndentifier[data[0]>>4])
+	fmt.Printf("    Protocol: %s\n", protocolIdentifier[data[0]>>4])
 	fmt.Printf("    Code set: %s\n", codeSet[data[0]&0xf])
 	fmt.Printf("    Designator type: %s\n", designatorType[data[1]&0xf])
 	fmt.Printf("    [")
@@ -498,7 +498,7 @@ var powerConsumptionUnits = map[byte]string{
 	0x05: "Microwatts",
 }
 
-func decodeInquriyPage8D(data []byte, dataLen int) {
+func decodeInquiryPage8D(data []byte, dataLen int) {
 	for offset := 4; offset < dataLen; offset += 4 {
 		fmt.Printf("  Power consumption ID: %d is %d in %s\n", data[offset],
 			int(data[offset+2])<<8|int(data[offset+3]), powerConsumptionUnits[data[offset+1]&0x7])
@@ -513,7 +513,7 @@ func decodeInquiryPage90(data []byte, dataLen int) {
 
 func decodeLogicalUnit(data []byte, offset int) int {
 	fmt.Printf("  Relative port identifier: %d\n", int(data[0])<<8|int(data[1]))
-	fmt.Printf("  Protocol: %s\n", protocolIndentifier[data[2]&0xf])
+	fmt.Printf("  Protocol: %s\n", protocolIdentifier[data[2]&0xf])
 	protocolLen := int(data[6])<<8 | int(data[7])
 	dumpMemory(data[8:], protocolLen, "    ")
 
@@ -528,7 +528,7 @@ func decodeInquiryPage91(data []byte, dataLen int) {
 
 func decodeProtocolSpecificPort(data []byte, offset int) int {
 	fmt.Printf("  Relative port identifier: %d\n", int(data[0])<<8|int(data[1]))
-	fmt.Printf("  Protocol: %s\n", protocolIndentifier[data[2]&0xf])
+	fmt.Printf("  Protocol: %s\n", protocolIdentifier[data[2]&0xf])
 	portLen := int(data[6])<<8 | int(data[7])
 	dumpMemory(data[8:], portLen, "    ")
 	return offset + portLen + 8
@@ -536,15 +536,15 @@ func decodeProtocolSpecificPort(data []byte, offset int) int {
 
 
 var pageB0BlockLimitsBytes = []multiByteDump{
-	{5, 1, "Maxiumum compare and write length"},
+	{5, 1, "Maximum compare and write length"},
 	{6, 2, "Optimal transfer length granularity"},
-	{8, 4, "Maxiumum transfer length"},
+	{8, 4, "Maximum transfer length"},
 	{12, 4, "Optimal transfer length"},
 	{16, 4, "Maximum prefetch length"},
 	{20, 4, "Maximum unmap LBA count"},
 	{24, 4, "Maximum unmap block descriptor count"},
 	{28, 4, "Optimal unmap granularity"},
-	{36, 8, "Maximum write same langth"},
+	{36, 8, "Maximum write same length"},
 }
 
 //noinspection GoUnusedParameter
@@ -670,7 +670,7 @@ var pageC0Table = []asciiOffsetTable {
 	{44,4,"SAP firmware release date"},
 	{48,4,"SAP firmware release year"},
 	{52,4,"SAP manufacturing key"},
-	{56,4,"Servo firmare product family IDs"},
+	{56, 4, "Servo firmware product family IDs"},
 }
 
 func decodeInquiryPageC0(data []byte, dataLen int) {
@@ -698,7 +698,7 @@ func decodeInquiryPageC0(data []byte, dataLen int) {
 
 /*
  * I dislike the MMDDYYYY format. Americans use MMDDYYYY, but Europeans use DDMMYYYY. So, convert the ASCII
- * date found in the data to day-month string-year. This removes abiguity for example 07052020. Is that July 5th 2020
+ * date found in the data to day-month string-year. This removes ambiguity for example 07052020. Is that July 5th 2020
  * or is it May 7th 2020.
  */
 func dataToDate(data []byte) string {
@@ -733,7 +733,7 @@ var deviceBehaviorTable = []multiByteDump {
 	{5,1,"Behavior code"},
 	{6,1,"Behavior version"},
 	{23,1,"# of interleaves"},
-	{24,1,"Default # of cache segmetns"},
+	{24, 1, "Default # of cache segments"},
 }
 
 //noinspection GoUnusedParameter

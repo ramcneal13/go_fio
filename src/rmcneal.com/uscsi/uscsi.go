@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+//noinspection GoSnakeCaseUsage,GoSnakeCaseUsage
 const (
 	INQUIRY            = 0x12
 	SECURITY_PROTO_IN  = 0xa2

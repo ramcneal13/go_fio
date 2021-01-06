@@ -7,7 +7,7 @@ import (
 	"bytes"
 )
 
-var protocolIndentifier = map[byte]string{
+var protocolIdentifier = map[byte]string{
 	0x0: "FCP-4",
 	0x1: "SPI-5",
 	0x2: "SSA-S3P",
@@ -146,14 +146,6 @@ type multiByteDump struct {
 	byteOffset	int
 	numberBytes	int
 	name		string
-}
-
-func htons(hd uint16) uint16 {
-	return (hd >> 8) | ((hd & 0xff) << 8)
-}
-
-func ntohs(nd uint16) uint16 {
-	return htons(nd)
 }
 
 func Append(slice, data []byte) []byte {
@@ -306,6 +298,7 @@ func (p *comPacket) addIntToSub(val uint32) {
 	p.subpacket = append(p.subpacket, (byte)(val & 0xff))
 }
 
+//noinspection GoUnusedFunction
 func longAtData(data []byte, val uint64, offset int) {
 	data[offset] = (byte)((val >> 56) & 0xff)
 	data[offset+1] = (byte)((val >> 48) & 0xff)

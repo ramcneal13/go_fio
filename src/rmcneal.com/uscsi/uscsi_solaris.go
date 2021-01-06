@@ -25,12 +25,12 @@ type uscsiCmd struct {
 }
 
 const (
-	UscsiWrite = 0
-	UscsiSlient = 1
+	UscsiWrite    = 0
+	UscsiSilent   = 1
 	UscsiDiagnose = 2
-	UscsiIsolate = 4
-	UscsiRead = 8
-	UscsiReset = 0x4000
+	UscsiIsolate  = 4
+	UscsiRead     = 8
+	UscsiReset    = 0x4000
 	UscsiRQEnable = 0x10000
 )
 
