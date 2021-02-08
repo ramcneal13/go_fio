@@ -5,6 +5,7 @@ import "rmcneal.com/support"
 import (
 	"fmt"
 	"bytes"
+	"os"
 )
 
 var protocolIdentifier = map[byte]string{
@@ -200,15 +201,19 @@ func dumpASCII(data []byte, offset int, count int) string {
 }
 
 type comPacket struct {
-	header []byte
-	payload []byte
-	subpacket []byte
-	totalLen	uint32
-	description	string
+	header      []byte
+	payload     []byte
+	subpacket   []byte
+	totalLen    uint32
+	description string
+	globalData  *tcgData
+	fp          *os.File
 }
 
-func createPacket(g *tcgData, name string) *comPacket {
+func createPacket(name string, g *tcgData, fp *os.File) *comPacket {
 	pd := &comPacket{}
+	pd.globalData = g
+	pd.fp = fp
 	pd.description = name
 	pd.header = make([]byte, 20)
 	pd.payload = make([]byte, 24)
@@ -218,7 +223,7 @@ func createPacket(g *tcgData, name string) *comPacket {
 	// 24 is the fixed size of the payload in the comPacket
 	pd.totalLen = uint32(24)
 	pd.putIntInPayload(g.spSessionID, 0) // TSN
-	pd.putIntInPayload(1, 4)             // HSN
+	pd.putIntInPayload(0x10000000, 4)    // HSN
 	g.sequenceNum++
 	pd.putIntInPayload(g.sequenceNum, 8) // Sequence number
 

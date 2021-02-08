@@ -6,6 +6,7 @@ import (
 	"strconv"
 )
 
+//noinspection ALL,GoSnakeCaseUsage
 const (
 	START_LIST  = 0xf0
 	END_LIST    = 0xf1
@@ -20,6 +21,8 @@ type tcgData struct {
 	comID            uint16
 	sequenceNum      uint32
 	spSessionID      uint32
+	msid             []byte
+	randomPIN        []byte
 }
 
 func sedCommand(fp *os.File) {
@@ -27,7 +30,7 @@ func sedCommand(fp *os.File) {
 	// Default to the device being an Opal device. It may not provide
 	// a feature code page 0x203 during Level 0 Discovery
 	tcgGlobal := &tcgData{true,false,false,false,
-		0, 0, 0x0}
+		0, 0, 0x0, nil, nil}
 
 	runDiscovery(fp, tcgGlobal)
 	if tcgGlobal.lockingSupported {
@@ -65,7 +68,7 @@ func sedCommand(fp *os.File) {
 				// conditions the last method will return false to end the state machine.
 				// Should a method encounter an error it's expected that the method will
 				// display any appropriate error messages.
-				fmt.Printf("[]---- %s ----[]\n", callout.name)
+				fmt.Printf("[%d]---- %s ----[]\n", currentState, callout.name)
 				if !callout.method(fp, tcgGlobal) {
 					return
 				}
@@ -111,20 +114,26 @@ var stateTable = map[int64]commonCallOut{
 	6:  {openAdminSession, "Open Admin Session"},
 	7:  {getMSID, "Get MSID"},
 	8:  {closeSession, "Close Session"},
-	9:  {tperReset, "TPer Reset"},
-	10: {stopStateMachine, "Stop State Machine"},
-	11: {openLockingSession, "Open Locking Session"},
-	12: {tperRevert, "TPer Revert"},
+	9:  {openAdminSession, "Open Admin Session"},
+	10: {getRandomPIN, "Get Random PIN"},
+	11: {closeSession, "Close Session"},
+	12: {openLockingSession, "Open Locking Session"},
 	13: {closeSession, "Close Session"},
 	14: {stopStateMachine, "Stop State Machine"},
+	15: {tperRevert, "TPer Revert"},
+	16: {closeSession, "Close Session"},
+	17: {stopStateMachine, "Stop State Machine"},
 }
 
 func checkReturnStatus(reply []byte) bool {
 	if len(reply) < 0x38 {
 		fmt.Printf("Invalid reply, doesn't include length in packet. Length %d\n", len(reply))
 		return false
+	} else if reply[0x38] == 0xfa {
+		// Special case for Close Session reply
+		return true
 	} else if reply[0x37] < 6 {
-		fmt.Printf("Invalid payload length: %d\n", reply[37])
+		fmt.Printf("Invalid payload length: %d\n", reply[0x37])
 		return false
 	}
 	for offset := 0x38; offset < len(reply); offset++ {
@@ -144,16 +153,48 @@ func checkReturnStatus(reply []byte) bool {
 	return false
 }
 
-func openAdminSession(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "Open Admin Session")
+func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
+	full := pkt.getFullPayload()
 
-	hardCoded := [...]byte{
+	cdb := make([]byte, 12)
+	cdb[0] = SECURITY_PROTO_OUT
+	cdb[1] = 1
+	shortAtData(cdb, pkt.globalData.comID, 2)
+	intAtData(cdb, (uint32)(len(full)), 6)
+
+	if _, err := sendUSCSI(pkt.fp, cdb, full, 0); err != nil {
+		fmt.Printf("Failed %s for device\n", pkt.description)
+		return false, nil
+	}
+
+	cdb[0] = SECURITY_PROTO_IN
+	reply := make([]byte, 512)
+	if _, err := sendUSCSI(pkt.fp, cdb, reply, 0); err != nil {
+		fmt.Printf("Failed SECURITY_PROTOCOL_IN for %s\n", pkt.description)
+		return false, nil
+	} else {
+		fmt.Printf("  []---- Response ----[]\n")
+		dumpMemory(reply, len(reply), "    ")
+	}
+	if !checkReturnStatus(reply) {
+		return false, nil
+	}
+
+	return true, reply
+
+}
+
+func openAdminSession(fp *os.File, g *tcgData) bool {
+	g.spSessionID = 0
+	pkt := createPacket("Open Admin Session", g, fp)
+
+	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0xf8, // Call Token
 		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
 		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02,
 		0xf0,
-		0x84, 0x20, 0x00, 0x00, 0x00,
+		0x84, 0x10, 0x00, 0x00, 0x00,
 		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, // Admin SP UID
 		0x01,
 		0xf1,
@@ -161,47 +202,21 @@ func openAdminSession(fp *os.File, g *tcgData) bool {
 		0xf0, 0x00, 0x00, 0x00, 0xf1,
 	}
 
-	newBuf := make([]byte, 0, len(hardCoded))
-	for _, v := range hardCoded {
-		newBuf = append(newBuf, v)
-	}
-	pkt.subpacket = newBuf
+	pkt.subpacket = hardCoded
 	pkt.fini()
 
-	full := pkt.getFullPayload()
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		fmt.Printf("Failed to open session for device\n")
-		return false
-	}
-
-	cdb[0] = SECURITY_PROTO_IN
-	reply := make([]byte, 512)
-	if _, err := sendUSCSI(fp, cdb, reply, 0); err != nil {
-		fmt.Printf("Failed SECURITY_PROTOCOL_IN for open session\n")
-		return false
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		pkt.globalData.spSessionID = getSPSessionID(reply)
+		return true
 	} else {
-		fmt.Printf("  []---- Response ----[]\n")
-		dumpMemory(reply, len(reply), "    ")
-	}
-	if !checkReturnStatus(reply) {
 		return false
 	}
-	g.spSessionID = getSPSessionID(reply)
-
-	return true
 }
 
 func getMSID(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "Get MSID")
+	pkt := createPacket("Get MSID", g, fp)
 
-	hardCoded := [...]byte{
+	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0xf8, // Call Token
 		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x84, 0x02,
@@ -213,122 +228,111 @@ func getMSID(fp *os.File, g *tcgData) bool {
 		0xf1, 0xf1, 0xf9,
 		0xf0, 0x00, 0x00, 0x00, 0xf1,
 	}
-	newBuf := make([]byte, 0, len(hardCoded))
-	for _, v := range hardCoded {
-		newBuf = append(newBuf, v)
-	}
-	pkt.subpacket = newBuf
+	pkt.subpacket = hardCoded
 	pkt.fini()
 
-	full := pkt.getFullPayload()
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		fmt.Printf("Failed to open session for Opal device\n")
-		return false
-	}
-
-	cdb[0] = SECURITY_PROTO_IN
-	reply := make([]byte, 512)
-	if _, err := sendUSCSI(fp, cdb, reply, 0); err != nil {
-		fmt.Printf("Failed SECURITY_PROTOCOL_IN for open session\n")
-		return false
-	} else {
-		fmt.Printf("  []---- Response ----[]\n")
-		dumpMemory(reply, len(reply), "    ")
-	}
-	if !checkReturnStatus(reply) {
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		copyMSID(g, reply)
+		fmt.Printf("    MSID: ")
+		for _, b := range g.msid {
+			fmt.Printf("%c", b)
+		}
+		fmt.Printf("\n")
 		return true
+	} else {
+		return false
+	}
+}
+
+func copyMSID(g *tcgData, reply []byte) {
+	for i := 0; i < len(reply); i++ {
+		if reply[i] == 0xf2 && reply[i+1] == 0x03 {
+			tokenHeader := reply[i+2] & 0xf0
+			msidLength := byte(0)
+			offset := 0
+
+			if tokenHeader == 0x80 {
+				msidLength = reply[i+2&0x0f]
+				offset = i + 3
+			} else if tokenHeader == 0xd0 {
+				msidLength = reply[i+3]
+				offset = i + 4
+			}
+			g.msid = make([]byte, msidLength)
+			copy(g.msid, reply[offset:offset+int(msidLength)])
+
+			break
+		}
+	}
+}
+
+func getRandomPIN(fp *os.File, g *tcgData) bool {
+	pkt := createPacket("Get Random PIN", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x06, 0x01,
+		0xf0, 0x20, 0xf1,
+		0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
 	}
 
-	return true
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		g.randomPIN = make([]byte, 0x20)
+		copy(g.randomPIN, reply[0x3b:])
+		return true
+	} else {
+		return false
+	}
 }
 
 func openLockingSession(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "Open Session")
+	g.spSessionID = 0
+	pkt := createPacket("Open Session", g, fp)
 
-	hardCoded := [...]byte{
+	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0xf8,                                                 // Call Token
-		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, // Short Atom (0xa8) with Invoking UID
-		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02, // Short Atom (0xa8) with StartSession Method UID
-		0xf0,                                                 // Start List Token
-		0x01,                                                 // Tiny Atom token: HostSession ID
-		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, // Short Atom (0xa8) with AdminSP UID
-		0x01,                                                 // Tiny Atom token: Write
-		0xf2,                                                 // Start Name Token
-		0x00,                                                 // Tiny Atom token: Name "HostChallenge"
-		0xd0, 0x12,                                           // Medium Atom Token Header, length 18
-		0x3c, 0x6e, 0x65, 0x77, 0x5f, 0x53, 0x49, 0x44, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x3e,
-		0xf3,                                                 // End Name Token
-		0xf2,                                                 // Start Name Token
-		0x03,                                                 // Tiny Atom Token: Name "HostSigningAuthority"
-		0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, // Short Atom (0xa8) with SID_UID
-		0xf3,                                                 // End Name Token
-		0xf1,                                                 // End List Token
-		0xf9,                                                 // End of Data Token
-		0xf0, 0x00, 0x00, 0x00, 0xf1,                         // Method Status List
-		0x00, 0x00, 0x00,                                     // Pad
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02,
+		0xf0,
+		0x84, 0x10, 0x00, 0x00, 0x00,
+		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, // Admin SP UID
+		0x01, 0xf2, 0x00,
 	}
 
-	newBuf := make([]byte, 0, len(hardCoded))
-	for _, v := range hardCoded {
+	newBuf := make([]byte, len(hardCoded))
+	copy(newBuf, hardCoded)
+
+	if len(g.msid) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.msid)))
+	} else {
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.msid)))
+	}
+	for _, v := range g.msid {
 		newBuf = append(newBuf, v)
 	}
+	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, 0xf3, 0xf1,
+		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
+
 	pkt.subpacket = newBuf
 	pkt.fini()
 
-	full := pkt.getFullPayload()
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		fmt.Printf("Failed to open session for Opal device\n")
-		return false
-	}
-
-	cdb[0] = SECURITY_PROTO_IN
-	reply := make([]byte, 512)
-	if _, err := sendUSCSI(fp, cdb, reply, 0); err != nil {
-		fmt.Printf("Failed SECURITY_PROTOCOL_IN for open session\n")
-		return false
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		pkt.globalData.spSessionID = getSPSessionID(reply)
+		return true
 	} else {
-		fmt.Printf("  []---- Response ----[]\n")
-		dumpMemory(reply, len(reply), "    ")
-	}
-	if !checkReturnStatus(reply) {
 		return false
 	}
-	g.spSessionID = getSPSessionID(reply)
-
-	return true
-}
-
-func tperReset(fp *os.File, g *tcgData) bool {
-	cdb := make([]byte, 12)
-	payload := make([]byte, 512)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 2
-	shortAtData(cdb, 4, 2)
-	intAtData(cdb, 512, 6)
-
-	if _, err := sendUSCSI(fp, cdb, payload, 0); err != nil {
-		fmt.Printf("Failed to issue TPer Reset, err=%s\n", err)
-	}
-	return true
 }
 
 func tperRevert(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "TPer Revert")
+	pkt := createPacket("TPer Revert", g, fp)
 
 	hardCoded := [...]byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -346,38 +350,17 @@ func tperRevert(fp *os.File, g *tcgData) bool {
 	pkt.subpacket = newBuf
 	pkt.fini()
 
-	full := pkt.getFullPayload()
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		fmt.Printf("Failed to open session for Opal device\n")
-		return false
-	}
-
-	cdb[0] = SECURITY_PROTO_IN
-	reply := make([]byte, 512)
-	if _, err := sendUSCSI(fp, cdb, reply, 0); err != nil {
-		fmt.Printf("Failed SECURITY_PROTOCOL_IN for open session\n")
-		return false
-	} else {
-		fmt.Printf("  []---- Response ----[]\n")
-		dumpMemory(reply, len(reply), "    ")
-	}
-	return true
+	ok, _ := sendSecurityOutIn(pkt)
+	return ok
 }
 
 func getSPSessionID(payload []byte) uint32 {
 	// offset := SESSION_ID_OFFSET + (payload[SESSION_ID_OFFSET] & 0x3f) + 2
 	returnVal := uint32(0)
 
-	payloadLen := payload[0x4c] & 0x3f
+	payloadLen := payload[0x51] & 0x3f
 	if payloadLen <= 4 {
-		converter := dataToInt{payload, 0x4d, int(payloadLen)}
+		converter := dataToInt{payload, 0x52, int(payloadLen)}
 		returnVal = uint32(converter.getInt())
 		fmt.Printf("SessionID: 0x%x\n", returnVal)
 	} else {
@@ -387,7 +370,7 @@ func getSPSessionID(payload []byte) uint32 {
 }
 
 func setSIDpin(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "Get MSID")
+	pkt := createPacket("Get MSID", g, fp)
 
 	hardCoded := [...]byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
@@ -402,35 +385,14 @@ func setSIDpin(fp *os.File, g *tcgData) bool {
 		newBuf = append(newBuf, v)
 	}
 	pkt.subpacket = newBuf
-
 	pkt.fini()
 
-	full := pkt.getFullPayload()
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		return false
-	}
-
-	cdb[0] = SECURITY_PROTO_IN
-	reply := make([]byte, 512)
-	if _, err := sendUSCSI(fp, cdb, reply, 0); err != nil {
-		fmt.Printf("SECURITY_PROTO_IN failed on closeSession, err=%s\n", err)
-	} else {
-		fmt.Printf("  []---- Response ----[]\n")
-		dumpMemory(reply, len(reply), "    ")
-	}
-
-	return true
+	ok, _ := sendSecurityOutIn(pkt)
+	return ok
 }
 
 func closeSession(fp *os.File, g *tcgData) bool {
-	pkt := createPacket(g, "Close Session")
+	pkt := createPacket("Close Session", g, fp)
 
 	hardCoded := [...]byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
@@ -441,31 +403,10 @@ func closeSession(fp *os.File, g *tcgData) bool {
 		newBuf = append(newBuf, v)
 	}
 	pkt.subpacket = newBuf
-
 	pkt.fini()
 
-	full := pkt.getFullPayload()
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 1
-	shortAtData(cdb, g.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, full, 0); err != nil {
-		return false
-	}
-
-	cdb[0] = SECURITY_PROTO_IN
-	reply := make([]byte, 512)
-	if _, err := sendUSCSI(fp, cdb, reply, 0); err != nil {
-		fmt.Printf("SECURITY_PROTO_IN failed on closeSession, err=%s\n", err)
-	} else {
-		fmt.Printf("  []---- Response ----[]\n")
-		dumpMemory(reply, len(reply), "    ")
-	}
-
-	return true
+	ok, _ := sendSecurityOutIn(pkt)
+	return ok
 }
 
 //noinspection ALL
