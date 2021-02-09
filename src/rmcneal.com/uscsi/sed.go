@@ -35,8 +35,7 @@ func sedCommand(fp *os.File) {
 	runDiscovery(fp, tcgGlobal)
 	if tcgGlobal.lockingSupported {
 		if tcgGlobal.lockingEnabled {
-			fmt.Printf("Our work is done here. Locking supported and enabled")
-			return
+			fmt.Printf("Our work is done here. Locking supported and enabled\n")
 		}
 	} else {
 		fmt.Printf("Locking is not supported\n")
@@ -107,7 +106,7 @@ var statusCodes = map[byte]string{
 
 var stateTable = map[int64]commonCallOut{
 	1:  {runDiscovery, "Discovery"},
-	2:  {openLockingSession, "Open Session"},
+	2:  {stopStateMachine, "Stop State Machine"},
 	3:  {setSIDpin, "Set SID PIN"},
 	4:  {closeSession, "Close Session"},
 	5:  {stopStateMachine, "Stop State Machine"},
@@ -118,11 +117,12 @@ var stateTable = map[int64]commonCallOut{
 	10: {getRandomPIN, "Get Random PIN"},
 	11: {closeSession, "Close Session"},
 	12: {openLockingSession, "Open Locking Session"},
-	13: {closeSession, "Close Session"},
-	14: {stopStateMachine, "Stop State Machine"},
-	15: {tperRevert, "TPer Revert"},
-	16: {closeSession, "Close Session"},
-	17: {stopStateMachine, "Stop State Machine"},
+	13: {setSIDpinRequest, "Set SID PIN Request"},
+	14: {closeSession, "Close Session"},
+	15: {openPINLockingSession, "Open PIN Locking Session"},
+	16: {activateLockingRequest, "Activate Locking Request"},
+	17: {closeSession, "Close Session"},
+	18: {stopStateMachine, "Stop State Machine"},
 }
 
 func checkReturnStatus(reply []byte) bool {
@@ -293,7 +293,7 @@ func getRandomPIN(fp *os.File, g *tcgData) bool {
 
 func openLockingSession(fp *os.File, g *tcgData) bool {
 	g.spSessionID = 0
-	pkt := createPacket("Open Session", g, fp)
+	pkt := createPacket("Open Locking Session", g, fp)
 
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -331,26 +331,97 @@ func openLockingSession(fp *os.File, g *tcgData) bool {
 	}
 }
 
-func tperRevert(fp *os.File, g *tcgData) bool {
-	pkt := createPacket("TPer Revert", g, fp)
+func openPINLockingSession(fp *os.File, g *tcgData) bool {
+	g.spSessionID = 0
+	pkt := createPacket("Open PIN Locking Session", g, fp)
 
-	hardCoded := [...]byte{
+	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0xf8,
-		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01,
-		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x02, 0x02,
-		0xf0, 0xf1,
-		0xf9,
-		0xf0, 0x00, 0x00, 0x00, 0xf1,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02,
+		0xf0,
+		0x84, 0x10, 0x00, 0x00, 0x00,
+		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, // Admin SP UID
+		0x01, 0xf2, 0x00,
 	}
-	newBuf := make([]byte, 0, len(hardCoded))
-	for _, v := range hardCoded {
+
+	newBuf := make([]byte, len(hardCoded))
+	copy(newBuf, hardCoded)
+
+	if len(g.msid) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.randomPIN)))
+	} else {
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.randomPIN)))
+	}
+	for _, v := range g.randomPIN {
 		newBuf = append(newBuf, v)
 	}
+	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, 0xf3, 0xf1,
+		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
+
+	pkt.subpacket = newBuf
+	pkt.fini()
+
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		pkt.globalData.spSessionID = getSPSessionID(reply)
+		return true
+	} else {
+		return false
+	}
+
+}
+
+func activateLockingRequest(fp *os.File, g *tcgData) bool {
+	pkt := createPacket("Activate Locking Request", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8,
+		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x02,
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x02, 0x03,
+		0xf0, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1, 0x00,
+	}
+
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	ok, _ := sendSecurityOutIn(pkt)
+	return ok
+}
+
+func setSIDpinRequest(fp *os.File, g *tcgData) bool {
+	pkt := createPacket("Set SID PIN Request", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8,
+		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x01,
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17,
+		0xf0,
+		0xf2, 0x01, 0xf0, 0xf2, 0x03,
+	}
+
+	newBuf := make([]byte, len(hardCoded))
+	copy(newBuf, hardCoded)
+
+	if len(g.randomPIN) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.randomPIN)))
+	} else {
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.randomPIN)))
+	}
+	for _, v := range g.randomPIN {
+		newBuf = append(newBuf, v)
+	}
+	newBuf = append(newBuf, 0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1)
+
 	pkt.subpacket = newBuf
 	pkt.fini()
 
 	ok, _ := sendSecurityOutIn(pkt)
+
 	return ok
 }
 
