@@ -61,21 +61,11 @@ func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 	cmd.senseBuf = unsafe.Pointer(slice.Data)
 	cmd.senseRequestLen = int8(len(senseBuf))
 
-	if debugOutput {
-		fmt.Printf("CDB:\n")
-		dumpMemory(cdb, len(cdb), "    ")
-	}
-
 	if _, _, err := syscall.Syscall(54, fp.Fd(), uintptr((4 << 8)|201), uintptr(unsafe.Pointer(&cmd))); err != 0 {
 		return 0, fmt.Errorf("syscall error: %s", err)
 	}
 	if cmd.status != 0 {
 		return 0, fmt.Errorf("status: %d", cmd.status)
-	}
-
-	if debugOutput && ((cmd.flags & UscsiRead) != 0) {
-		fmt.Printf("DataIn (available: %d):\n", cmd.bufLen-cmd.resid)
-		dumpMemory(data, len(data), "    ")
 	}
 
 	return int(cmd.bufLen - cmd.resid), nil

@@ -1,9 +1,8 @@
 package main
 
-import "rmcneal.com/support"
-
 import (
 	"fmt"
+	"rmcneal.com/support"
 	"bytes"
 	"os"
 )
@@ -23,17 +22,24 @@ var protocolIdentifier = map[byte]string{
 }
 
 func hexDump(buf []byte, n int, offset int64, offsetWidth int) {
-	fmt.Printf("%0*x: ", offsetWidth, offset)
+	if offsetWidth != 0 {
+		fmt.Printf("%0*x: ", offsetWidth, offset)
+	}
 	for byteIndex := 0; byteIndex < n; byteIndex += 1 {
 		fmt.Printf("%02x", buf[byteIndex])
 		if (byteIndex % 4) == 3 {
 			fmt.Printf(" ")
 		}
 	}
+	if n%4 != 0 {
+		fmt.Printf(" ")
+	}
 }
 
 func asciiDump(buf []byte, n int) {
-	fmt.Printf("%*s  ", (16-n)*3, "")
+	remainder := 16 - n
+	fmt.Printf("%*s%*s    ", (remainder%4)*2, "", (remainder/4)*9, "")
+
 	for byteIndex := 0; byteIndex < n; byteIndex += 1 {
 		if buf[byteIndex] >= ' ' && buf[byteIndex] <= '~' {
 			fmt.Printf("%c", buf[byteIndex])
@@ -253,12 +259,15 @@ func (p *comPacket) getFullPayload() []byte {
 	full = Append(full, p.header)
 	full = Append(full, p.payload)
 	full = Append(full, p.subpacket)
+
 	padding := make([]byte, 512 - len(full))
 	full = Append(full, padding)
 
-	fmt.Printf("  Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n",
-		len(p.header), len(p.payload), len(p.subpacket), len(full))
-	dumpMemory(full, len(full), "  ")
+	if debugOutput {
+		fmt.Printf("  Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n",
+			len(p.header), len(p.payload), len(p.subpacket), len(full))
+		dumpMemory(full, len(full), "  ")
+	}
 
 	return full
 }

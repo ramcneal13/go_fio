@@ -32,47 +32,26 @@ func sedCommand(fp *os.File) {
 	tcgGlobal := &tcgData{true,false,false,false,
 		0, 0, 0x0, nil, nil}
 
-	runDiscovery(fp, tcgGlobal)
-	if tcgGlobal.lockingSupported {
-		if tcgGlobal.lockingEnabled {
-			fmt.Printf("Our work is done here. Locking supported and enabled\n")
-		}
+	if currentState, err := strconv.ParseInt(sedOption, 0, 32); err != nil {
+		fmt.Printf("Invalid starting state number: %s, err=%s\n", sedOption, err)
+		return
 	} else {
-		fmt.Printf("Locking is not supported\n")
-		return
-	}
-
-	if !updateComID(fp, tcgGlobal) {
-		return
-	}
-	fmt.Printf("ComID: 0x%x\n", tcgGlobal.comID)
-
-	switch sedOption {
-	case "":
-		fmt.Printf("No command requested\n")
-
-	default:
-		if currentState, err := strconv.ParseInt(sedOption, 0, 32); err != nil {
-			fmt.Printf("Invalid starting state number: %s, err=%s\n", sedOption, err)
-			return
-		} else {
-			for {
-				callout, ok := stateTable[currentState]
-				if !ok {
-					fmt.Printf("Invalid starting state: %d\n", currentState)
-					return
-				}
-
-				// Methods should return true to proceed to the next state. Under normal
-				// conditions the last method will return false to end the state machine.
-				// Should a method encounter an error it's expected that the method will
-				// display any appropriate error messages.
-				fmt.Printf("[%d]---- %s ----[]\n", currentState, callout.name)
-				if !callout.method(fp, tcgGlobal) {
-					return
-				}
-				currentState++
+		for {
+			callout, ok := stateTable[currentState]
+			if !ok {
+				fmt.Printf("Invalid starting state: %d\n", currentState)
+				return
 			}
+
+			// Methods should return true to proceed to the next state. Under normal
+			// conditions the last method will return false to end the state machine.
+			// Should a method encounter an error it's expected that the method will
+			// display any appropriate error messages.
+			fmt.Printf("[%d]---- %s ----[]\n", currentState, callout.name)
+			if !callout.method(fp, tcgGlobal) {
+				return
+			}
+			currentState++
 		}
 	}
 }
@@ -105,24 +84,47 @@ var statusCodes = map[byte]string{
 }
 
 var stateTable = map[int64]commonCallOut{
-	1:  {runDiscovery, "Discovery"},
-	2:  {stopStateMachine, "Stop State Machine"},
-	3:  {setSIDpin, "Set SID PIN"},
-	4:  {closeSession, "Close Session"},
-	5:  {stopStateMachine, "Stop State Machine"},
-	6:  {openAdminSession, "Open Admin Session"},
-	7:  {getMSID, "Get MSID"},
-	8:  {closeSession, "Close Session"},
+	1: {runDiscovery, "Discovery"},
+	2: {updateComID, "Update COMID"},
+	3: {stopStateMachine, "Stop State Machine"},
+	4: {setSIDpin, "Set SID PIN"},
+	5: {closeSession, "Close Session"},
+	6: {stopStateMachine, "Stop State Machine"},
+	// Enable locking support
+	7:  {runDiscovery, "Discovery"},
+	8:  {updateComID, "Update COMID"},
 	9:  {openAdminSession, "Open Admin Session"},
-	10: {getRandomPIN, "Get Random PIN"},
+	10: {getMSID, "Get MSID"},
 	11: {closeSession, "Close Session"},
-	12: {openLockingSession, "Open Locking Session"},
-	13: {setSIDpinRequest, "Set SID PIN Request"},
+	12: {openAdminSession, "Open Admin Session"},
+	13: {getRandomPIN, "Get Random PIN"},
 	14: {closeSession, "Close Session"},
-	15: {openPINLockingSession, "Open PIN Locking Session"},
-	16: {activateLockingRequest, "Activate Locking Request"},
+	15: {openLockingSession, "Open Locking Session"},
+	16: {setSIDpinRequest, "Set SID PIN Request"},
 	17: {closeSession, "Close Session"},
-	18: {stopStateMachine, "Stop State Machine"},
+	18: {openPINLockingSession, "Open PIN Locking Session"},
+	19: {activateLockingRequest, "Activate Locking Request"},
+	20: {closeSession, "Close Session"},
+	21: {stopStateMachine, "Stop State Machine"},
+	// Test of opening with PIN
+	22: {runDiscovery, "Discovery"},
+	23: {updateComID, "Update COMID"},
+	24: {openAdminSession, "Open Admin Session"},
+	25: {getMSID, "Get MSID"},
+	26: {closeSession, "Close Session"},
+	27: {openAdminSession, "Open Admin Session"},
+	28: {getRandomPIN, "Get RandomPIN"},
+	29: {closeSession, "Close Session"},
+	30: {openPINLockingSession, "Open PIN Locking Session"},
+	31: {closeSession, "Close Session"},
+	32: {stopStateMachine, "Stop State Machine"},
+	// Test of TPer revert
+	33: {runDiscovery, "Discovery"},
+	34: {updateComID, "Update COMID"},
+	35: {openRevertLockingSession, "Open Revert Locking"},
+	36: {revertTPer, "Revert TPer"},
+	37: {closeSession, "Close Session"},
+	38: {stopStateMachine, "Stop State Machine"},
 }
 
 func checkReturnStatus(reply []byte) bool {
@@ -141,7 +143,7 @@ func checkReturnStatus(reply []byte) bool {
 			if reply[offset+1] == START_LIST && reply[offset+5] == END_LIST {
 				status := reply[offset+2]
 				if status != 0 {
-					fmt.Printf("  []---- ERROR: %s ----[]\n", statusCodes[status])
+					fmt.Printf("    ERROR: %s\n", statusCodes[status])
 					return false
 				} else {
 					return true
@@ -172,7 +174,7 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 	if _, err := sendUSCSI(pkt.fp, cdb, reply, 0); err != nil {
 		fmt.Printf("Failed SECURITY_PROTOCOL_IN for %s\n", pkt.description)
 		return false, nil
-	} else {
+	} else if debugOutput {
 		fmt.Printf("  []---- Response ----[]\n")
 		dumpMemory(reply, len(reply), "    ")
 	}
@@ -285,6 +287,8 @@ func getRandomPIN(fp *os.File, g *tcgData) bool {
 	if ok, reply := sendSecurityOutIn(pkt); ok {
 		g.randomPIN = make([]byte, 0x20)
 		copy(g.randomPIN, reply[0x3b:])
+		fmt.Printf("    Randdom PIN:\n")
+		dumpMemory(g.randomPIN, len(g.randomPIN), "    ")
 		return true
 	} else {
 		return false
@@ -372,6 +376,55 @@ func openPINLockingSession(fp *os.File, g *tcgData) bool {
 
 }
 
+func openRevertLockingSession(fp *os.File, g *tcgData) bool {
+	g.spSessionID = 0
+	pkt := createPacket("Open PIN Locking Session", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02,
+		0xf0,
+		0x84, 0x10, 0x00, 0x00, 0x00,
+		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, // Admin SP UID
+		0x01, 0xf2, 0x00,
+		0xd0, 0x12,
+		0x3c, 0x6e, 0x65, 0x77, 0x5f, 0x53, 0x49, 0x44, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x3e,
+		0xf3, 0xf2, 0x03,
+		0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06,
+		0xf3, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		pkt.globalData.spSessionID = getSPSessionID(reply)
+		return true
+	} else {
+		return false
+	}
+
+}
+
+func revertTPer(fp *os.File, g *tcgData) bool {
+	pkt := createPacket("Revert TPer", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x02, 0x02,
+		0xf0, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	ok, _ := sendSecurityOutIn(pkt)
+	return ok
+}
+
 func activateLockingRequest(fp *os.File, g *tcgData) bool {
 	pkt := createPacket("Activate Locking Request", g, fp)
 
@@ -433,7 +486,7 @@ func getSPSessionID(payload []byte) uint32 {
 	if payloadLen <= 4 {
 		converter := dataToInt{payload, 0x52, int(payloadLen)}
 		returnVal = uint32(converter.getInt())
-		fmt.Printf("SessionID: 0x%x\n", returnVal)
+		fmt.Printf("    SessionID: 0x%x\n", returnVal)
 	} else {
 		fmt.Printf("  []---- Invalid SessionID ----[]\n")
 	}
@@ -443,7 +496,7 @@ func getSPSessionID(payload []byte) uint32 {
 func setSIDpin(fp *os.File, g *tcgData) bool {
 	pkt := createPacket("Get MSID", g, fp)
 
-	hardCoded := [...]byte{
+	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 		0xf8,
 		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x01, // SID UID
@@ -451,11 +504,7 @@ func setSIDpin(fp *os.File, g *tcgData) bool {
 		0xf0,
 		0xf2, 0x01, 0xf0, 0xf2, 0x03,
 	}
-	newBuf := make([]byte, 0, len(hardCoded))
-	for _, v := range hardCoded {
-		newBuf = append(newBuf, v)
-	}
-	pkt.subpacket = newBuf
+	pkt.subpacket = hardCoded
 	pkt.fini()
 
 	ok, _ := sendSecurityOutIn(pkt)
@@ -465,15 +514,11 @@ func setSIDpin(fp *os.File, g *tcgData) bool {
 func closeSession(fp *os.File, g *tcgData) bool {
 	pkt := createPacket("Close Session", g, fp)
 
-	hardCoded := [...]byte{
+	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 		0xfa,
 	}
-	newBuf := make([]byte, 0, len(hardCoded))
-	for _, v := range hardCoded {
-		newBuf = append(newBuf, v)
-	}
-	pkt.subpacket = newBuf
+	pkt.subpacket = hardCoded
 	pkt.fini()
 
 	ok, _ := sendSecurityOutIn(pkt)
@@ -507,6 +552,9 @@ func runDiscovery(fp *os.File, g *tcgData) bool {
 		fmt.Printf("USCSI failed, err=%s\n", err)
 		return false
 	} else {
+		if debugOutput {
+			dumpMemory(data, dataLen, "  ")
+		}
 		dumpLevelZeroDiscovery(data, dataLen, g)
 	}
 	return true
@@ -525,14 +573,12 @@ func updateComID(fp *os.File, g *tcgData) bool {
 		data[5] = 0
 		data[19] = 255
 
-		/*
 		cdb[0] = SECURITY_PROTO_OUT
 		if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
-			fmt.Printf("Hmm... SECURITY_OUT failed for ComID request\n")
+			fmt.Printf("    Hmm... SECURITY_OUT failed for ComID request\n")
 		} else {
-			fmt.Printf("SECURITY_OUT okay\n")
+			fmt.Printf("    SECURITY_OUT okay\n")
 		}
-		*/
 
 		cdb[0] = SECURITY_PROTO_IN
 		if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
@@ -551,6 +597,7 @@ func updateComID(fp *os.File, g *tcgData) bool {
 		fmt.Printf("Device type uknown\n")
 		g.comID = 0x7ffe
 	}
+	fmt.Printf("    ComID: 0x%x\n", g.comID)
 	return true
 }
 
