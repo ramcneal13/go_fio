@@ -109,4 +109,5 @@ func main() {
 			fmt.Printf("%s\n", key)
 		}
 	}
+	os.Exit(0)
 }
