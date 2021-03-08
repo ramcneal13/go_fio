@@ -971,6 +971,22 @@ var codeStr = map[int]featureFuncName {
 	0x0403: {"Configurable Namespace Locking", dumpCNL},
 }
 
+type desciptorCodeRanges struct {
+	startRange int
+	endRange   int
+	name       string
+}
+
+var descriptorCodeRangeArray = []desciptorCodeRanges{
+	{0x0000, 0x0000, "Reserved"},
+	{0x0001, 0x0001, "TPer feature"},
+	{0x0002, 0x0002, "Locking feature"},
+	{0x0003, 0x00ff, "Reserved"},
+	{0x0100, 0x03ff, "SSCs"},
+	{0x0400, 0xbfff, "Reserved"},
+	{0xc000, 0xffff, "Vendor Unique"},
+}
+
 func dumpDescriptor(data []byte, g *tcgData) int {
 	template := dataToInt{data, 0, 2}
 	code := template.getInt()
@@ -984,7 +1000,12 @@ func dumpDescriptor(data []byte, g *tcgData) int {
 		codeStr[code].dump(data, g)
 		fmt.Printf("\n")
 	} else {
-		fmt.Printf("  Unknown code: %d (0x%x)\n", code, code)
+		for _, v := range descriptorCodeRangeArray {
+			if code >= v.startRange && code <= v.endRange {
+				fmt.Printf("  Feature: %s (code: 0x%x)\n\n", v.name, code)
+				break
+			}
+		}
 	}
 	return featureLen + 4
 }
