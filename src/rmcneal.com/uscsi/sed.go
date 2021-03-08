@@ -163,6 +163,13 @@ var stateTable = map[int64]commonCallOut{
 	56: {revertTPer, "Revert"},
 	57: {closeSession, "Close Session"},
 	58: {stopStateMachine, "Stop State Machine"},
+	// Test of Secure Erase
+	59: {runDiscovery, "Discovery"},
+	60: {updateComID, "Update COMID"},
+	61: {openAdminSession, "Open Admin Session"},
+	62: {secureErase, "Secure Erase"},
+	63: {closeSession, "Close Session"},
+	64: {stopStateMachine, "Stop State Machine"},
 }
 
 func checkReturnStatus(reply []byte) bool {
@@ -800,6 +807,25 @@ func setSIDpin(fp *os.File, g *tcgData) (bool, int) {
 	return ok, 1
 }
 
+func secureErase(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Secure Erase", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xF8,
+		0xA8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00, 0x02,
+		0xA8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x08, 0x03,
+		0xF0, 0xF1, 0xF9,
+		0xF0, 0x00, 0x00, 0x00, 0xF1,
+	}
+
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	ok, _ := sendSecurityOutIn(pkt)
+	return ok, 1
+}
+
 func closeSession(fp *os.File, g *tcgData) (bool, int) {
 	pkt := createPacket("Close Session", g, fp)
 
@@ -861,7 +887,7 @@ func updateComID(fp *os.File, g *tcgData) (bool, int) {
 		data = make([]byte, 512)
 		data[5] = 0
 		data[19] = 255
-		
+
 		/*
 		cdb[0] = SECURITY_PROTO_OUT
 		if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
@@ -923,8 +949,8 @@ func dumpLevelZeroDiscovery(data []byte, len int, g *tcgData) {
 
 	fmt.Printf("Level 0 Discovery\n  Data available: %d\n  Version       : %d.%d\n", paramLen,
 		majorVers, minorVers)
-	for offset := 48; offset < paramLen ; {
-		offset += dumpDescriptor(data[offset:], g)
+	for offset := 0; offset < paramLen; {
+		offset += dumpDescriptor(data[offset+48:], g)
 	}
 }
 
@@ -941,6 +967,8 @@ var codeStr = map[int]featureFuncName {
 	0x0202: {"Additional DataStore", dumpAdditionalDataStore},
 	0x0203: {"Opal v2.01_rev1.00 SSC", dumpOpalV2Feature},
 	0x0304: {"Ruby SSC", dumpRubyFeature},
+	0x0402: {"Set Block SID", dumpSetBlockSID},
+	0x0403: {"Configurable Namespace Locking", dumpCNL},
 }
 
 func dumpDescriptor(data []byte, g *tcgData) int {
@@ -1058,4 +1086,34 @@ func dumpRubyFeature(data []byte, g *tcgData) {
 	converter := dataToInt{data, 4,2}
 	g.comID = (uint16)(converter.getInt())
 	doMultiByteDump(rubyMulitByte, data)
+}
+
+var cnlMultiByte = []multiByteDump{
+	{8, 4, "Maximum Key Count"},
+	{12, 4, "Unused Key Count"},
+	{16, 4, "Maximum Ranges Per Namespace"},
+}
+
+var cnlBitMap = []bitMaskBitDump{
+	{4, 7, 0x1, "Range_C"},
+	{4, 6, 0x1, "Rance_P"},
+}
+
+//noinspection GoUnusedParameter
+func dumpCNL(data []byte, g *tcgData) {
+	doBitDump(cnlBitMap, data)
+	doMultiByteDump(cnlMultiByte, data)
+}
+
+var sbsBitMap = []bitMaskBitDump{
+	{4, 3, 0x01, "Locking_SP_Freeze_Lock_State"},
+	{4, 2, 0x01, "Locking_SP_Freeze_Lock_supported"},
+	{4, 1, 0x01, "SID_Authentication_Blocked_State"},
+	{4, 0, 0x01, "SID_Value_State"},
+	{5, 0, 0x01, "Hardware_Reset"},
+}
+
+//noinspection GoUnusedParameter
+func dumpSetBlockSID(data []byte, g *tcgData) {
+	doBitDump(sbsBitMap, data)
 }
