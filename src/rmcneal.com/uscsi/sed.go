@@ -23,6 +23,7 @@ type tcgData struct {
 	spSessionID      uint32
 	msid             []byte
 	randomPIN        []byte
+	psid             string
 }
 
 func sedCommand(fp *os.File) {
@@ -30,16 +31,13 @@ func sedCommand(fp *os.File) {
 	// Default to the device being an Opal device. It may not provide
 	// a feature code page 0x203 during Level 0 Discovery
 	tcgGlobal := &tcgData{true,false,false,false,
-		0, 0, 0x0, nil, nil}
+		0, 0, 0x0, nil, nil, ""}
 
-	/*
-	randomPin1 := []byte {
-		0xb1, 0x19, 0x1f, 0x25, 0x81, 0x9f, 0x58, 0x59,
-		0x2c, 0x45, 0x2d, 0xb6, 0x8e, 0xda, 0x29, 0xd0,
-		0x9f, 0x80, 0x97, 0xe1, 0xed, 0x05, 0x57, 0xc6,
-		0xf9, 0xc0, 0xc6, 0x67, 0x29, 0x10, 0x56, 0x1c,
+	if err := loadPSIDpairs(tcgGlobal); err != nil {
+		fmt.Printf("Loading of PSID failed: %s\n", err)
+		os.Exit(1)
 	}
-	*/
+
 	randomPin2 := []byte{
 		0x2c, 0x6b, 0x6b, 0xca, 0x26, 0x0a, 0x1d, 0xe2, 0x49, 0x01, 0x89, 0xca, 0x86, 0xd7, 0xc5, 0x41,
 		0xa0, 0xde, 0x64, 0x1b, 0x1d, 0x49, 0x93, 0xf6, 0x66, 0xef, 0x00, 0xbd, 0x5d, 0xdb, 0xcb, 0x3e,
@@ -105,8 +103,8 @@ var stateTable = map[int64]commonCallOut{
 	1: {runDiscovery, "Discovery"},
 	2: {updateComID, "Update COMID"},
 	3: {stopStateMachine, "Stop State Machine"},
-	4: {setSIDpin, "Set SID PIN"},
-	5: {closeSession, "Close Session"},
+
+	5: {tperReset, "TPer Reset"},
 	6: {stopStateMachine, "Stop State Machine"},
 	// Enable locking support
 	7:  {runDiscovery, "Discovery"},
@@ -159,14 +157,14 @@ var stateTable = map[int64]commonCallOut{
 	52: {openAdminSession, "Open Locking Session"},
 	53: {setSIDpinMSID, "Set SID using MSID"},
 	54: {closeSession, "Close Session"},
-	55: {openMSIDLockingSession, "Open Locking Session"},
+	55: {openPSIDLockingSession, "Open Locking Session"},
 	56: {revertTPer, "Revert"},
 	57: {closeSession, "Close Session"},
 	58: {stopStateMachine, "Stop State Machine"},
 	// Test of Secure Erase
 	59: {runDiscovery, "Discovery"},
 	60: {updateComID, "Update COMID"},
-	61: {openAdminSession, "Open Admin Session"},
+	61: {openPSIDLockingSession, "Open PSID Session"},
 	62: {secureErase, "Secure Erase"},
 	63: {closeSession, "Close Session"},
 	64: {stopStateMachine, "Stop State Machine"},
@@ -207,7 +205,7 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 	cdb[0] = SECURITY_PROTO_OUT
 	cdb[1] = 1
 	shortAtData(cdb, pkt.globalData.comID, 2)
-	intAtData(cdb, (uint32)(len(full)), 6)
+	intAtData(cdb, 1, 6)
 
 	if _, err := sendUSCSI(pkt.fp, cdb, full, 0); err != nil {
 		fmt.Printf("Failed %s for device\n", pkt.description)
@@ -231,6 +229,24 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 
 }
 
+//noinspection GoUnusedParameter
+func tperReset(fp *os.File, g *tcgData) (bool, int) {
+	emmptyPayload := make([]byte, 512)
+
+	cdb := make([]byte, 12)
+	cdb[0] = SECURITY_PROTO_OUT
+	cdb[1] = 2
+	shortAtData(cdb, 4, 2)
+	intAtData(cdb, uint32(len(emmptyPayload)), 6)
+
+	if _, err := sendUSCSI(fp, cdb, emmptyPayload, 0); err != nil {
+		fmt.Printf("  TPer Reset failed: %s\n", err)
+		return false, 1
+	} else {
+		return true, 0
+	}
+}
+
 func openAdminSession(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
 	pkt := createPacket("Open Admin Session", g, fp)
@@ -249,6 +265,7 @@ func openAdminSession(fp *os.File, g *tcgData) (bool, int) {
 		0xf0, 0x00, 0x00, 0x00, 0xf1,
 	}
 
+	pkt.putIntInPayload(0, 4) // HSN
 	pkt.subpacket = hardCoded
 	pkt.fini()
 
@@ -289,6 +306,48 @@ func openMSIDLockingSession(fp *os.File, g *tcgData) (bool, int) {
 	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, 0xf3, 0xf1,
 		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
 
+	pkt.putIntInPayload(0, 4) // HSN
+	pkt.subpacket = newBuf
+	pkt.fini()
+
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		pkt.globalData.spSessionID = getSPSessionID(reply)
+		return true, 0
+	} else {
+		return false, 1
+	}
+}
+
+func openPSIDLockingSession(fp *os.File, g *tcgData) (bool, int) {
+	g.spSessionID = 0
+	pkt := createPacket("Open Locking Session", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02,
+		0xf0,
+		0x84, 0x10, 0x00, 0x00, 0x00,
+		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x01, // Admin SP UID
+		0x01, 0xf2, 0x00,
+	}
+
+	newBuf := make([]byte, len(hardCoded))
+	copy(newBuf, hardCoded)
+
+	if len(g.psid) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.psid)))
+	} else {
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.psid)))
+	}
+	for _, v := range g.psid {
+		newBuf = append(newBuf, byte(v))
+	}
+	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x01, 0xff, 0x01, 0xf3, 0xf1,
+		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
+
+	pkt.putIntInPayload(0, 4) // HSN
 	pkt.subpacket = newBuf
 	pkt.fini()
 
@@ -331,6 +390,7 @@ func openUser1LockingSession(fp *os.File, g *tcgData) (bool, int) {
 	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x03, 0x00, 0x01, 0xf3, 0xf1, 0xf9,
 		0xf0, 0x00, 0x00, 0x00, 0xf1)
 
+	pkt.putIntInPayload(0, 4) // HSN
 	pkt.subpacket = newBuf
 	pkt.fini()
 
@@ -371,6 +431,7 @@ func openRandomLockingSession(fp *os.File, g *tcgData) (bool, int) {
 	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, 0xf3, 0xf1,
 		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
 
+	pkt.putIntInPayload(0, 4) // HSN
 	pkt.subpacket = newBuf
 	pkt.fini()
 
@@ -411,6 +472,8 @@ func openLockingSPSession(fp *os.File, g *tcgData) (bool, int) {
 	}
 	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x01, 0x00, 0x01, 0xf3, 0xf1,
 		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
+
+	pkt.putIntInPayload(0, 4) // HSN
 	pkt.subpacket = newBuf
 	pkt.fini()
 
@@ -764,9 +827,14 @@ func commonSID(pkt *comPacket, sid []byte) bool {
 	return ok
 }
 
+//noinspection ALL
 func setSIDpinMSID(fp *os.File, g *tcgData) (bool, int) {
+	/*
 	pkt := createPacket("Set SID from MSID", g, fp)
 	return commonSID(pkt, g.msid), 1
+	*/
+	fmt.Printf("    Non-functional for now\n")
+	return true, 0
 }
 
 func setSIDpinRandom(fp *os.File, g *tcgData) (bool, int) {
@@ -789,24 +857,6 @@ func getSPSessionID(payload []byte) uint32 {
 	return returnVal
 }
 
-func setSIDpin(fp *os.File, g *tcgData) (bool, int) {
-	pkt := createPacket("Set SID", g, fp)
-
-	hardCoded := []byte{
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-		0xf8,
-		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x01, // SID UID
-		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // set SID PIN
-		0xf0,
-		0xf2, 0x01, 0xf0, 0xf2, 0x03,
-	}
-	pkt.subpacket = hardCoded
-	pkt.fini()
-
-	ok, _ := sendSecurityOutIn(pkt)
-	return ok, 1
-}
-
 func secureErase(fp *os.File, g *tcgData) (bool, int) {
 	pkt := createPacket("Secure Erase", g, fp)
 
@@ -822,8 +872,8 @@ func secureErase(fp *os.File, g *tcgData) (bool, int) {
 	pkt.subpacket = hardCoded
 	pkt.fini()
 
-	ok, _ := sendSecurityOutIn(pkt)
-	return ok, 1
+	sendSecurityOutIn(pkt)
+	return true, 1
 }
 
 func closeSession(fp *os.File, g *tcgData) (bool, int) {
@@ -949,6 +999,13 @@ func dumpLevelZeroDiscovery(data []byte, len int, g *tcgData) {
 
 	fmt.Printf("Level 0 Discovery\n  Data available: %d\n  Version       : %d.%d\n", paramLen,
 		majorVers, minorVers)
+	if g.psid != "" {
+		fmt.Printf("  PSID: %s\n", g.psid)
+	} else {
+		fmt.Printf("  PSID: NO VALUE AVAILABLE\n")
+	}
+	fmt.Println()
+
 	for offset := 0; offset < paramLen; {
 		offset += dumpDescriptor(data[offset+48:], g)
 	}
@@ -1002,7 +1059,9 @@ func dumpDescriptor(data []byte, g *tcgData) int {
 	} else {
 		for _, v := range descriptorCodeRangeArray {
 			if code >= v.startRange && code <= v.endRange {
-				fmt.Printf("  Feature: %s (code: 0x%x)\n\n", v.name, code)
+				fmt.Printf("  Feature: %s (code: 0x%x)\n", v.name, code)
+				dumpMemory(data, featureLen, "    ")
+				fmt.Println()
 				break
 			}
 		}
@@ -1077,13 +1136,21 @@ func dumpLockingFeature(data []byte, g *tcgData) {
 	doBitDump(lockingBitMap, data)
 }
 
+var geometryBitMap = []bitMaskBitDump{
+	{4, 0, 0x01, "Align"},
+}
+
 var geometryMultiByte = []multiByteDump{
 	{0, 2, "Feature Code"},
 	{3, 1, "Length"},
+	{12, 4, "Logical Block Size"},
+	{16, 8, "Alignment Granularity"},
+	{24, 8, "Lowest Aligned LBA"},
 }
 
 //noinspection GoUnusedParameter
 func dumpGeometryFeature(data []byte, g *tcgData) {
+	doBitDump(geometryBitMap, data)
 	doMultiByteDump(geometryMultiByte, data)
 }
 

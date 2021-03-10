@@ -5,6 +5,10 @@ import (
 	"rmcneal.com/support"
 	"bytes"
 	"os"
+	"bufio"
+	"strings"
+	"strconv"
+	"io"
 )
 
 var protocolIdentifier = map[byte]string{
@@ -230,8 +234,8 @@ func createPacket(name string, g *tcgData, fp *os.File) *comPacket {
 	pd.totalLen = uint32(24)
 	pd.putIntInPayload(g.spSessionID, 0) // TSN
 	pd.putIntInPayload(0x10000000, 4)    // HSN
-	g.sequenceNum++
 	pd.putIntInPayload(g.sequenceNum, 8) // Sequence number
+	g.sequenceNum++
 
 	return pd
 }
@@ -334,4 +338,82 @@ func intAtData(data []byte, val uint32, offset int) {
 func shortAtData(data []byte, val uint16, offset int) {
 	data[offset] = (byte)((val >> 8) & 0xff)
 	data[offset+1] = (byte)(val & 0xff)
+}
+
+const (
+	GlobalFile      = "Global-PSID"
+	MasterPSIDName  = "Master"
+	MasterPSIDValue = 0
+)
+
+func loadPSIDpairs(g *tcgData) error {
+	var paramFP *os.File
+	var err error
+	kvMap := map[uint64]string{}
+	lineNumber := 1
+
+	if paramFP, err = os.Open(GlobalFile); err != nil {
+		if paramFP, err = os.Create(GlobalFile); err != nil {
+			return fmt.Errorf("couldn't create %s", GlobalFile)
+		}
+		fmt.Fprint(paramFP, "master MarryHadALittleLamb")
+		paramFP.Seek(0, 0)
+	}
+
+	rb := bufio.NewReader(paramFP)
+	for {
+		if oneLine, err := rb.ReadString('\n'); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("read error in %s, err=%s", GlobalFile, err)
+		} else {
+			oneLine = strings.TrimSuffix(oneLine, "\n")
+			keyValue := strings.Split(oneLine, " ")
+			if len(keyValue) != 2 {
+				return fmt.Errorf("invalid line in parameter file: %s", keyValue)
+			}
+
+			if strings.EqualFold(keyValue[0], MasterPSIDName) {
+				kvMap[MasterPSIDValue] = keyValue[1]
+			} else {
+				if guid, err := strconv.ParseUint(keyValue[0], 16, 64); err != nil {
+					return fmt.Errorf("line %d: Invalid GUID of %s", lineNumber, keyValue[0])
+				} else {
+					if len(keyValue[1]) != 32 {
+						fmt.Printf("WARNING: PSID is commonly 32 bytes, line %d has a %d length\n",
+							lineNumber, len(keyValue[1]))
+					}
+					kvMap[guid] = keyValue[1]
+				}
+			}
+		}
+		lineNumber++
+	}
+
+	baseName := ""
+	lastSlash := strings.LastIndexByte(inputDevice, '/')
+	if lastSlash == -1 {
+		baseName = inputDevice
+	} else {
+		baseName = inputDevice[lastSlash+1:]
+	}
+
+	firstT := strings.IndexByte(baseName, 't')
+	lastD := strings.LastIndexByte(baseName, 'd')
+	if firstT == -1 || lastD == -1 {
+		return fmt.Errorf("invalid device name: %s", baseName)
+	}
+
+	driveGUID, err := strconv.ParseUint(baseName[firstT+1:lastD], 16, 64)
+	if err != nil {
+		return err
+	}
+	if psid, ok := kvMap[driveGUID]; !ok {
+		return fmt.Errorf("failed to find %016x in keymap", driveGUID)
+	} else {
+		g.psid = psid
+	}
+
+	return nil
 }
