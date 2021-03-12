@@ -341,9 +341,9 @@ func shortAtData(data []byte, val uint16, offset int) {
 }
 
 const (
-	GlobalFile      = "Global-PSID"
-	MasterPSIDName  = "Master"
-	MasterPSIDValue = 0
+	GlobalFile     = "Global-PSID"
+	MasterPSIDName = "Master"
+	MasterPSIDGUID = 0
 )
 
 func loadPSIDpairs(g *tcgData) error {
@@ -356,7 +356,6 @@ func loadPSIDpairs(g *tcgData) error {
 		if paramFP, err = os.Create(GlobalFile); err != nil {
 			return fmt.Errorf("couldn't create %s", GlobalFile)
 		}
-		fmt.Fprint(paramFP, "master MarryHadALittleLamb")
 		paramFP.Seek(0, 0)
 	}
 
@@ -375,7 +374,7 @@ func loadPSIDpairs(g *tcgData) error {
 			}
 
 			if strings.EqualFold(keyValue[0], MasterPSIDName) {
-				kvMap[MasterPSIDValue] = keyValue[1]
+				kvMap[MasterPSIDGUID] = keyValue[1]
 			} else {
 				if guid, err := strconv.ParseUint(keyValue[0], 16, 64); err != nil {
 					return fmt.Errorf("line %d: Invalid GUID of %s", lineNumber, keyValue[0])
@@ -390,6 +389,7 @@ func loadPSIDpairs(g *tcgData) error {
 		}
 		lineNumber++
 	}
+	paramFP.Close()
 
 	baseName := ""
 	lastSlash := strings.LastIndexByte(inputDevice, '/')
@@ -414,6 +414,66 @@ func loadPSIDpairs(g *tcgData) error {
 	} else {
 		g.psid = psid
 	}
+	if masterID, ok := kvMap[MasterPSIDGUID]; !ok {
+		return fmt.Errorf("failed to find master key")
+	} else {
+		g.master = masterID
+	}
 
 	return nil
+}
+
+func randomToMaster(r []byte, maxLen int) string {
+	newMaster := strings.Builder{}
+
+	for _, v := range r {
+		newMaster.WriteString(fmt.Sprintf("%02x", v))
+		maxLen -= 2
+		if maxLen <= 0 {
+			break
+		}
+	}
+	return newMaster.String()
+}
+
+func updateMaster(s string) {
+	currentGlobalFP, err := os.Open(GlobalFile)
+	if err != nil {
+		fmt.Printf("Can't read current parameters file %s\n", GlobalFile)
+		os.Exit(1)
+	}
+
+	newGlobalFP, err := os.Create(GlobalFile + ".new")
+	if err != nil {
+		fmt.Printf("Oops. Can't create temp file for parameters\n")
+		os.Exit(1)
+	}
+
+	rb := bufio.NewReader(currentGlobalFP)
+	wb := bufio.NewWriter(newGlobalFP)
+
+	defer func() {
+		wb.Flush()
+		newGlobalFP.Close()
+		currentGlobalFP.Close()
+		os.Rename(GlobalFile+".new", GlobalFile)
+	}()
+
+	for {
+		inputLine, err := rb.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Printf("Read error on %s, err=%s\n", GlobalFile, err)
+			os.Exit(1)
+		}
+
+		nameValue := strings.Split(inputLine, " ")
+		if strings.EqualFold(nameValue[0], MasterPSIDName) {
+			wb.WriteString(fmt.Sprintf("%s %s\n", MasterPSIDName, s))
+		} else {
+			wb.WriteString(inputLine)
+		}
+	}
 }

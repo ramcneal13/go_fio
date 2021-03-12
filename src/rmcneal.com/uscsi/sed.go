@@ -22,35 +22,31 @@ type tcgData struct {
 	sequenceNum      uint32
 	spSessionID      uint32
 	msid             []byte
-	randomPIN        []byte
-	psid             string
+	//randomPIN        []byte
+	psid   string
+	master string
 }
+
+var user1Pin = []byte{0x75, 0x73, 0x65, 0x72, 0x31,}
 
 func sedCommand(fp *os.File) {
 
 	// Default to the device being an Opal device. It may not provide
 	// a feature code page 0x203 during Level 0 Discovery
 	tcgGlobal := &tcgData{true,false,false,false,
-		0, 0, 0x0, nil, nil, ""}
+		0, 0, 0x0, nil, "", ""}
 
 	if err := loadPSIDpairs(tcgGlobal); err != nil {
 		fmt.Printf("Loading of PSID failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	randomPin2 := []byte{
-		0x2c, 0x6b, 0x6b, 0xca, 0x26, 0x0a, 0x1d, 0xe2, 0x49, 0x01, 0x89, 0xca, 0x86, 0xd7, 0xc5, 0x41,
-		0xa0, 0xde, 0x64, 0x1b, 0x1d, 0x49, 0x93, 0xf6, 0x66, 0xef, 0x00, 0xbd, 0x5d, 0xdb, 0xcb, 0x3e,
-	}
-
-	tcgGlobal.randomPIN = randomPin2
-
 	if currentState, err := strconv.ParseInt(sedOption, 0, 32); err != nil {
 		fmt.Printf("Invalid starting state number: %s, err=%s\n", sedOption, err)
 		return
 	} else {
 		for {
-			callout, ok := stateTable[currentState]
+			callOut, ok := stateTable[currentState]
 			if !ok {
 				fmt.Printf("Invalid starting state: %d\n", currentState)
 				return
@@ -60,8 +56,8 @@ func sedCommand(fp *os.File) {
 			// conditions the last method will return false to end the state machine.
 			// Should a method encounter an error it's expected that the method will
 			// display any appropriate error messages.
-			fmt.Printf("[%d]---- %s ----[]\n", currentState, callout.name)
-			if ok, exitCode := callout.method(fp, tcgGlobal); !ok {
+			fmt.Printf("[%d]---- %s ----[]\n", currentState, callOut.name)
+			if ok, exitCode := callOut.method(fp, tcgGlobal); !ok {
 				if exitCode != 0 {
 					os.Exit(exitCode)
 				}
@@ -112,51 +108,27 @@ var stateTable = map[int64]commonCallOut{
 	9:  {openAdminSession, "Open Admin Session"},
 	10: {getMSID, "Get MSID"},
 	11: {closeSession, "Close Session"},
-	12: {openAdminSession, "Open Admin Session"},
-	13: {getRandomPIN, "Get Random PIN"},
+	12: {openMSIDLockingSession, "Open Locking Session"},
+	13: {setSIDpinFromMaster, "Set SID PIN from Master Request"},
 	14: {closeSession, "Close Session"},
-	15: {openMSIDLockingSession, "Open Locking Session"},
-	16: {setSIDpinRandom, "Set SID PIN Request"},
+	15: {openAdminWithMasterKey, "Open PIN Locking Session"},
+	16: {activateLockingRequest, "Activate Locking Request"},
 	17: {closeSession, "Close Session"},
-	18: {openRandomLockingSession, "Open PIN Locking Session"},
-	19: {activateLockingRequest, "Activate Locking Request"},
-	20: {closeSession, "Close Session"},
-	21: {openLockingSPSession, "Open SP Locking Session"},
-	22: {setAdmin1Password, "Set Admin1 Password"},
-	23: {enableUser1Password, "Enable User1 Password"},
-	24: {changeUser1Password, "Change User1 Password"},
-	25: {setDatastoreWrite, "Set Data Store Write Access"},
-	26: {setDatastoreRead, "Set Data Store Read Access"},
-	27: {enableRange0RWLock, "Enable Range0 RW Lock"},
-	28: {closeSession, "End SP Locking Session"},
-	29: {openUser1LockingSession, "Open Locking SP Session"},
-	30: {setDatastore, "Set Data Store"},
-	31: {closeSession, "Close Session"},
-	32: {stopStateMachine, "Stop State Machine"},
-	// Test of opening with PIN
-	33: {runDiscovery, "Discovery"},
-	34: {updateComID, "Update COMID"},
-	35: {openLockingSPSession, "Open SP Locking Session"},
-	36: {setAdmin1Password, "Set Admin1 Password"},
-	37: {enableUser1Password, "Enable User1 Password"},
-	38: {changeUser1Password, "Change User1 Password"},
-	39: {setDatastoreWrite, "Set Data Store Write Access"},
-	40: {setDatastoreRead, "Set Data Store Read Access"},
-	41: {enableRange0RWLock, "Enable Range0 RW Lock"},
-	42: {closeSession, "End SP Locking Session"},
-	43: {openUser1LockingSession, "Open Locking SP Session"},
-	44: {setDatastore, "Set Data Store"},
-	45: {closeSession, "Close Session"},
-	46: {stopStateMachine, "Stop State Machine"},
+	18: {openLockingSPSession, "Open SP Locking Session"},
+	19: {setAdmin1Password, "Set Admin1 Password"},
+	20: {enableUser1Password, "Enable User1 Password"},
+	21: {changeUser1Password, "Change User1 Password"},
+	22: {setDatastoreWrite, "Set Data Store Write Access"},
+	23: {setDatastoreRead, "Set Data Store Read Access"},
+	24: {enableRange0RWLock, "Enable Range0 RW Lock"},
+	25: {closeSession, "End SP Locking Session"},
+	26: {openUser1LockingSession, "Open Locking SP Session"},
+	27: {setDatastore, "Set Data Store"},
+	28: {closeSession, "Close Session"},
+	29: {stopStateMachine, "Stop State Machine"},
 	// Test of TPer revert
-	47: {runDiscovery, "Discovery"},
-	48: {updateComID, "Update COMID"},
-	49: {openAdminSession, "Open Admin Session"},
-	50: {getMSID, "Get MSID"},
-	51: {closeSession, "Close Session"},
-	52: {openAdminSession, "Open Locking Session"},
-	53: {setSIDpinMSID, "Set SID using MSID"},
-	54: {closeSession, "Close Session"},
+	53: {runDiscovery, "Discovery"},
+	54: {updateComID, "Update COMID"},
 	55: {openPSIDLockingSession, "Open Locking Session"},
 	56: {revertTPer, "Revert"},
 	57: {closeSession, "Close Session"},
@@ -164,10 +136,17 @@ var stateTable = map[int64]commonCallOut{
 	// Test of Secure Erase
 	59: {runDiscovery, "Discovery"},
 	60: {updateComID, "Update COMID"},
-	61: {openPSIDLockingSession, "Open PSID Session"},
+	61: {openUser1LockingSession, "Open User1 Locking Session"},
 	62: {secureErase, "Secure Erase"},
 	63: {closeSession, "Close Session"},
 	64: {stopStateMachine, "Stop State Machine"},
+	// Get RandomPIN for master key
+	65: {runDiscovery, "Discovery"},
+	66: {updateComID, "Update COMID"},
+	67: {openAdminSession, "OpenAdminSession"},
+	68: {getRandomPIN, "Get Random PIN"},
+	69: {closeSession, "Close Session"},
+	70: {stopStateMachine, "Stop State Machine"},
 }
 
 func checkReturnStatus(reply []byte) bool {
@@ -372,9 +351,6 @@ func openUser1LockingSession(fp *os.File, g *tcgData) (bool, int) {
 		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x02,
 		0x01, 0xf2, 0x00,
 	}
-	user1Pin := []byte{
-		0x75, 0x73, 0x65, 0x72, 0x31,
-	}
 
 	newBuf := make([]byte, len(hardCoded))
 	copy(newBuf, hardCoded)
@@ -402,7 +378,7 @@ func openUser1LockingSession(fp *os.File, g *tcgData) (bool, int) {
 	}
 }
 
-func openRandomLockingSession(fp *os.File, g *tcgData) (bool, int) {
+func openAdminWithMasterKey(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
 	pkt := createPacket("Open PIN Locking Session", g, fp)
 
@@ -420,13 +396,13 @@ func openRandomLockingSession(fp *os.File, g *tcgData) (bool, int) {
 	newBuf := make([]byte, len(hardCoded))
 	copy(newBuf, hardCoded)
 
-	if len(g.randomPIN) <= 15 {
-		newBuf = append(newBuf, byte(0xa0|len(g.randomPIN)))
+	if len(g.master) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.master)))
 	} else {
-		newBuf = append(newBuf, byte(0xd0), byte(len(g.randomPIN)))
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.master)))
 	}
-	for _, v := range g.randomPIN {
-		newBuf = append(newBuf, v)
+	for _, v := range g.master {
+		newBuf = append(newBuf, byte(v))
 	}
 	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06, 0xf3, 0xf1,
 		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
@@ -462,13 +438,13 @@ func openLockingSPSession(fp *os.File, g *tcgData) (bool, int) {
 	newBuf := make([]byte, len(hardCoded))
 	copy(newBuf, hardCoded)
 
-	if len(g.randomPIN) <= 15 {
-		newBuf = append(newBuf, byte(0xa0|len(g.randomPIN)))
+	if len(g.master) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.master)))
 	} else {
-		newBuf = append(newBuf, byte(0xd0), byte(len(g.randomPIN)))
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.master)))
 	}
-	for _, v := range g.randomPIN {
-		newBuf = append(newBuf, v)
+	for _, v := range g.master {
+		newBuf = append(newBuf, byte(v))
 	}
 	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x01, 0x00, 0x01, 0xf3, 0xf1,
 		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
@@ -555,10 +531,12 @@ func getRandomPIN(fp *os.File, g *tcgData) (bool, int) {
 	pkt.fini()
 
 	if ok, reply := sendSecurityOutIn(pkt); ok {
-		g.randomPIN = make([]byte, 0x20)
-		copy(g.randomPIN, reply[0x3b:])
+		randomPIN := make([]byte, 0x20)
+		copy(randomPIN, reply[0x3b:])
 		fmt.Printf("    Randdom PIN:\n")
-		dumpMemory(g.randomPIN, len(g.randomPIN), "    ")
+		dumpMemory(randomPIN, len(randomPIN), "    ")
+		g.master = randomToMaster(randomPIN, 32)
+		updateMaster(g.master)
 		return true, 0
 	} else {
 		return false, 1
@@ -578,13 +556,13 @@ func setAdmin1Password(fp *os.File, g *tcgData) (bool, int) {
 	newBuf := make([]byte, len(hardCoded))
 	copy(newBuf, hardCoded)
 
-	if len(g.randomPIN) <= 15 {
-		newBuf = append(newBuf, byte(0xa0|len(g.randomPIN)))
+	if len(g.master) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.master)))
 	} else {
-		newBuf = append(newBuf, byte(0xd0), byte(len(g.randomPIN)))
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.master)))
 	}
-	for _, v := range g.randomPIN {
-		newBuf = append(newBuf, v)
+	for _, v := range g.master {
+		newBuf = append(newBuf, byte(v))
 	}
 	newBuf = append(newBuf, 0xf3, 0xf1, 0xf3, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
 	pkt.subpacket = newBuf
@@ -627,9 +605,6 @@ func changeUser1Password(fp *os.File, g *tcgData) (bool, int) {
 		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x03, 0x00, 0x01,
 		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17,
 		0xf0, 0xf2, 0x01, 0xf0, 0xf2, 0x03,
-	}
-	user1Pin := []byte{
-		0x75, 0x73, 0x65, 0x72, 0x31,
 	}
 
 	newBuf := make([]byte, len(hardCoded))
@@ -737,13 +712,13 @@ func setDatastore(fp *os.File, g *tcgData) (bool, int) {
 	newBuf := make([]byte, len(hardCoded))
 	copy(newBuf, hardCoded)
 
-	if len(g.randomPIN) <= 15 {
-		newBuf = append(newBuf, byte(0xa0|len(g.randomPIN)))
+	if len(g.master) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.master)))
 	} else {
-		newBuf = append(newBuf, byte(0xd0), byte(len(g.randomPIN)))
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.master)))
 	}
-	for _, v := range g.randomPIN {
-		newBuf = append(newBuf, v)
+	for _, v := range g.master {
+		newBuf = append(newBuf, byte(v))
 	}
 	newBuf = append(newBuf, 0xf3, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
 
@@ -795,7 +770,7 @@ func activateLockingRequest(fp *os.File, g *tcgData) (bool, int) {
 	return ok, 1
 }
 
-func commonSID(pkt *comPacket, sid []byte) bool {
+func commonSID(pkt *comPacket, sid string) bool {
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0xf8,
@@ -814,7 +789,7 @@ func commonSID(pkt *comPacket, sid []byte) bool {
 		newBuf = append(newBuf, byte(0xd0), byte(len(sid)))
 	}
 	for _, v := range sid {
-		newBuf = append(newBuf, v)
+		newBuf = append(newBuf, byte(v))
 	}
 	newBuf = append(newBuf, 0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
 		0xf0, 0x00, 0x00, 0x00, 0xf1)
@@ -837,9 +812,9 @@ func setSIDpinMSID(fp *os.File, g *tcgData) (bool, int) {
 	return true, 0
 }
 
-func setSIDpinRandom(fp *os.File, g *tcgData) (bool, int) {
+func setSIDpinFromMaster(fp *os.File, g *tcgData) (bool, int) {
 	pkt := createPacket("Set SID PIN Request", g, fp)
-	return commonSID(pkt, g.randomPIN), 1
+	return commonSID(pkt, g.master), 1
 }
 
 func getSPSessionID(payload []byte) uint32 {
