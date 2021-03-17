@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"fmt"
-	"strconv"
 )
 
 //noinspection ALL,GoSnakeCaseUsage
@@ -22,47 +21,37 @@ type tcgData struct {
 	sequenceNum      uint32
 	spSessionID      uint32
 	msid             []byte
-	//randomPIN        []byte
-	psid   string
-	master string
+	psid             string
+	master           string
+	range1UID        []byte
 }
 
 var user1Pin = []byte{0x75, 0x73, 0x65, 0x72, 0x31,}
 
 func sedCommand(fp *os.File) {
-	var err error
-	var currentState int64
+	var ok bool
+	var currentTable nameStateDescriptor
+	currentState := 0
 
 	// Default to the device being an Opal device. It may not provide
 	// a feature code page 0x203 during Level 0 Discovery
 	tcgGlobal := &tcgData{true,false,false,false,
-		0, 0, 0x0, nil, "", ""}
+		0, 0, 0x0, nil, "", "", nil}
 
 	if err := loadPSIDpairs(tcgGlobal); err != nil {
 		fmt.Printf("Loading of PSID failed: %s\n", err)
 	}
 
-	if currentState, err = strconv.ParseInt(sedOption, 0, 32); err != nil {
-		if stateHelp, ok := nameToState[sedOption]; !ok {
-			fmt.Printf("Valid State names are:\n")
-			maxLen := 0
-			for name := range nameToState {
-				if len(name) > maxLen {
-					maxLen = len(name)
-				}
-			}
-
-			for name, descriptor := range nameToState {
-				fmt.Printf("[%04d] %*s -- %s\n", descriptor.startingState, maxLen, name, descriptor.helpString)
-			}
-			return
-		} else {
-			currentState = stateHelp.startingState
+	if currentTable, ok = nameToState[sedOption]; !ok {
+		fmt.Printf("Valid options are:\n")
+		for name, table := range nameToState {
+			fmt.Printf("  %s -- %s\n", name, table.helpString)
 		}
+		return
 	}
 
 	for {
-		callOut, ok := stateTable[currentState]
+		callOut, ok := currentTable.stateTable[currentState]
 		if !ok {
 			fmt.Printf("Invalid starting state: %d\n", currentState)
 			return
@@ -111,89 +100,122 @@ var statusCodes = map[byte]string{
 }
 
 type nameStateDescriptor struct {
-	startingState int64
-	helpString    string
+	stateTable map[int]commonCallOut
+	helpString string
 }
 
-// NOTE: It should be obvious, but the startingState value must match the state number found
-// in the stateTable that starts that particular function
 var nameToState = map[string]nameStateDescriptor{
-	"discovery": {1, "Run just discovery phase"},
-	"enable":    {20, "Enable locking for drive"},
-	"revert":    {50, "Revert drive to factory settings"},
-	"erase":     {60, "Secure erase drive"},
-	"pin":       {70, "Reset Master password"},
-	"master":    {80, "Revert using Master key"},
+	"discovery":    {discoveryStateTable, "Run just discovery phase"},
+	"enable":       {enableStateTable, "Enable locking for drive"},
+	"revert":       {revertStateTable, "Revert drive to factory settings"},
+	"erase-opalv1": {eraseStateTable, "Secure erase drive"},
+	"pin":          {resetMasterStateTable, "CAUTION: Reset Master password"},
+	"master":       {masterRevertStateTable, "Revert using Master key"},
+	"erase":        {experimentalStateTable, "Experimental work"},
+	"lock":         {lockStateTable, "Lock Range 1"},
+	"unlock":       {unlockStateTable, "Unlock Range 1"},
 }
 
-var stateTable = map[int64]commonCallOut{
-	1: {runDiscovery, "Discovery"},
-	2: {updateComID, "Update COMID"},
-	3: {stopStateMachine, "Stop State Machine"},
+var experimentalStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openLockingSPSession, "Open SP Locking Session"},
+	3: {setLockingRange1, "Set Locking Range 1"},
+	4: {retrieveLockingUID, "Retrieve Locking UID"},
+	5: {eraseWithGenKey, "Erase with Genkey"},
+	6: {closeSession, "Close Session"},
+	7: {stopStateMachine, "Stop State Machine"},
+}
 
-	10: {tperReset, "TPer Reset"},
-	11: {stopStateMachine, "Stop State Machine"},
+var lockStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openLockingSPSession, "Open SP Locking Session"},
+	3: {retrieveLockingUID, "Retrieve Locking UID"},
+	4: {lockRange1, "Lock Range 1"},
+	5: {closeSession, "Close Session"},
+	6: {stopStateMachine, "Stop State Machine"},
+}
 
-	// Enable locking support
-	20: {runDiscovery, "Discovery"},
-	21: {updateComID, "Update COMID"},
-	22: {openAdminSession, "Open Admin Session"},
-	23: {getMSID, "Get MSID"},
-	24: {closeSession, "Close Session"},
-	25: {openMSIDLockingSession, "Open Locking Session"},
-	26: {setSIDpinFromMaster, "Set SID PIN from Master Request"},
-	27: {closeSession, "Close Session"},
-	28: {openAdminWithMasterKey, "Open PIN Locking Session"},
-	29: {activateLockingRequest, "Activate Locking Request"},
-	30: {closeSession, "Close Session"},
-	31: {openLockingSPSession, "Open SP Locking Session"},
-	32: {setAdmin1Password, "Set Admin1 Password"},
-	33: {enableUser1Password, "Enable User1 Password"},
-	34: {changeUser1Password, "Change User1 Password"},
-	35: {setDatastoreWrite, "Set Data Store Write Access"},
-	36: {setDatastoreRead, "Set Data Store Read Access"},
-	37: {enableRange0RWLock, "Enable Range0 RW Lock"},
-	38: {closeSession, "End SP Locking Session"},
-	39: {openUser1LockingSession, "Open Locking SP Session"},
-	40: {setDatastore, "Set Data Store"},
-	41: {closeSession, "Close Session"},
-	42: {stopStateMachine, "Stop State Machine"},
+var unlockStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openLockingSPSession, "Open SP Locking Session"},
+	3: {retrieveLockingUID, "Retrieve Locking UID"},
+	4: {unlockRange1, "Unlock Range 1"},
+	5: {closeSession, "Close Session"},
+	6: {stopStateMachine, "Stop State Machine"},
+}
+var discoveryStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {stopStateMachine, "Stop State Machine"},
+}
 
-	// Test of TPer revert
-	50: {runDiscovery, "Discovery"},
-	51: {updateComID, "Update COMID"},
-	52: {openPSIDLockingSession, "Open Locking Session"},
-	53: {revertTPer, "Revert"},
-	54: {closeSession, "Close Session"},
-	55: {stopStateMachine, "Stop State Machine"},
+var enableStateTable = map[int]commonCallOut{
+	0:  {runDiscovery, "Discovery"},
+	1:  {updateComID, "Update COMID"},
+	2:  {openAdminSession, "Open Admin Session"},
+	3:  {getMSID, "Get MSID"},
+	4:  {closeSession, "Close Session"},
+	5:  {openMSIDLockingSession, "Open Locking Session"},
+	6:  {setSIDpinFromMaster, "Set SID PIN from Master Request"},
+	7:  {closeSession, "Close Session"},
+	8:  {openAdminWithMasterKey, "Open PIN Locking Session"},
+	9:  {activateLockingRequest, "Activate Locking Request"},
+	10: {closeSession, "Close Session"},
+	11: {openLockingSPSession, "Open SP Locking Session"},
+	12: {setAdmin1Password, "Set Admin1 Password"},
+	13: {enableUser1Password, "Enable User1 Password"},
+	14: {changeUser1Password, "Change User1 Password"},
+	15: {setDatastoreWrite, "Set Data Store Write Access"},
+	16: {setDatastoreRead, "Set Data Store Read Access"},
+	17: {enableRange0RWLock, "Enable Range0 RW Lock"},
+	18: {closeSession, "End SP Locking Session"},
+	19: {openUser1LockingSession, "Open Locking SP Session"},
+	20: {setDatastore, "Set Data Store"},
+	21: {closeSession, "Close Session"},
+	22: {stopStateMachine, "Stop State Machine"},
+}
 
-	// Test of Secure Erase
-	60: {runDiscovery, "Discovery"},
-	61: {updateComID, "Update COMID"},
-	62: {openAdminSession, "Open Admin Session"},
-	63: {getMSID, "Get MSID"},
-	64: {closeSession, "Close Session"},
-	65: {openTestLockingSession, "Open Test Locking Session"},
-	66: {authUser, "Authenticate User"},
-	67: {secureErase, "Secure Erase"},
-	68: {closeSession, "Close Session"},
-	69: {stopStateMachine, "Stop State Machine"},
+var revertStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openPSIDLockingSession, "Open Locking Session"},
+	3: {revertTPer, "Revert"},
+	4: {closeSession, "Close Session"},
+	5: {stopStateMachine, "Stop State Machine"},
+}
 
-	// Get RandomPIN for master key
-	70: {runDiscovery, "Discovery"},
-	71: {updateComID, "Update COMID"},
-	72: {openAdminSession, "OpenAdminSession"},
-	73: {getRandomPIN, "Get Random PIN"},
-	74: {closeSession, "Close Session"},
-	75: {stopStateMachine, "Stop State Machine"},
+var eraseStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openAdminSession, "Open Admin Session"},
+	3: {getMSID, "Get MSID"},
+	4: {closeSession, "Close Session"},
+	5: {openTestLockingSession, "Open Test Locking Session"},
+	6: {authUser, "Authenticate User"},
+	7: {secureErase, "Secure Erase"},
+	8: {closeSession, "Close Session"},
+	9: {stopStateMachine, "Stop State Machine"},
+}
 
-	// Test Revert with Master key -- Similar to erase for v2 Opal.
-	80: {runDiscovery, "Discovery"},
-	81: {updateComID, "Update COMID"},
-	82: {openAdminWithMasterKey, "Open PIN Locking Session"},
-	83: {revertTPer, "Revert"},
-	84: {closeSession, "Close Session"},
-	85: {stopStateMachine, "Stop State Machine"},
+var resetMasterStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openAdminSession, "OpenAdminSession"},
+	3: {getRandomPIN, "Get Random PIN"},
+	4: {closeSession, "Close Session"},
+	5: {stopStateMachine, "Stop State Machine"},
+}
+
+var masterRevertStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openAdminWithMasterKey, "Open PIN Locking Session"},
+	3: {revertTPer, "Revert"},
+	4: {closeSession, "Close Session"},
+	5: {stopStateMachine, "Stop State Machine"},
 }
 
 func checkReturnStatus(reply []byte) bool {
@@ -255,24 +277,6 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 
 }
 
-//noinspection GoUnusedParameter
-func tperReset(fp *os.File, g *tcgData) (bool, int) {
-	emmptyPayload := make([]byte, 512)
-
-	cdb := make([]byte, 12)
-	cdb[0] = SECURITY_PROTO_OUT
-	cdb[1] = 2
-	shortAtData(cdb, 4, 2)
-	intAtData(cdb, uint32(len(emmptyPayload)), 6)
-
-	if _, err := sendUSCSI(fp, cdb, emmptyPayload, 0); err != nil {
-		fmt.Printf("  TPer Reset failed: %s\n", err)
-		return false, 1
-	} else {
-		return true, 0
-	}
-}
-
 func openAdminSession(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
 	g.sequenceNum = 0
@@ -306,6 +310,7 @@ func openAdminSession(fp *os.File, g *tcgData) (bool, int) {
 
 func openMSIDLockingSession(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
+	g.sequenceNum = 0
 	pkt := createPacket("Open Locking Session", g, fp)
 
 	hardCoded := []byte{
@@ -347,6 +352,7 @@ func openMSIDLockingSession(fp *os.File, g *tcgData) (bool, int) {
 
 func openPSIDLockingSession(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
+	g.sequenceNum = 0
 	pkt := createPacket("Open Locking Session", g, fp)
 
 	hardCoded := []byte{
@@ -388,6 +394,7 @@ func openPSIDLockingSession(fp *os.File, g *tcgData) (bool, int) {
 
 func openUser1LockingSession(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
+	g.sequenceNum = 0
 	pkt := createPacket("Open Locking SP Session", g, fp)
 
 	hardCoded := []byte{
@@ -662,8 +669,8 @@ func enableUser1Password(fp *os.File, g *tcgData) (bool, int) {
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0xf8,
-		0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x03, 0x00, 0x01,
-		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17,
+		0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x03, 0x00, 0x01, // Locking SP Authority Table User1 UID
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // "Set" method
 		0xf0, 0xf2, 0x01, 0xf0, 0xf2, 0x05, 0x01, 0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
 		0xf0, 0x00, 0x00, 0x00, 0xf1,
 	}
@@ -756,8 +763,152 @@ func setDatastoreRead(fp *os.File, g *tcgData) (bool, int) {
 	}
 }
 
+func setLockingRange1(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Set Locking Range1", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8,
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // "Set" method UID
+		0xf0,
+		0xf2,
+		0x01, // "Values"
+		0xf0, 0xf2,
+		0x03,             // "RangeStart"
+		0x82, 0x00, 0x00, // Starting range
+		0xf3,
+		0xf2,
+		0x04,             // "RangeLength"
+		0x82, 0x01, 0x00, // Range length
+		0xf3, 0xf2,
+		0x05, // ReadLockEnabled
+		0x01, // True
+		0xf3,
+		0xf2,
+		0x06, // WriteLockEnabled
+		0x01, // True
+		0xf3, 0xf1, 0xf3, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	sendSecurityOutIn(pkt)
+	return true, 1
+}
+
+func retrieveLockingUID(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Set Locking Range1", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8,
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x16, // "Get" method UID
+		0xf0, 0xf0, 0xf2,
+		0x03, // "startColumn"
+		0x0a, // <ActiveKey>
+		0xf3, 0xf2,
+		0x04, // "endColumn"
+		0x0a, // <ActiveKey>
+		0xf3, 0xf1, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	if ok, payload := sendSecurityOutIn(pkt); ok {
+		g.range1UID = getLockingRange1UID(payload)
+		dumpMemory(g.range1UID, 8, "    ")
+	}
+	return true, 1
+}
+
+func eraseWithGenKey(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Authenticate User", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xF8,
+	}
+
+	newBuf := make([]byte, len(hardCoded))
+	copy(newBuf, hardCoded)
+
+	if len(g.range1UID) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.range1UID)))
+	} else {
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.range1UID)))
+	}
+	for _, v := range g.range1UID {
+		newBuf = append(newBuf, v)
+	}
+	newBuf = append(newBuf, 0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x10) // Genkey Method UID
+	newBuf = append(newBuf, 0xf0, 0xf1, 0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
+
+	pkt.subpacket = newBuf
+	pkt.fini()
+
+	sendSecurityOutIn(pkt)
+	return true, 1
+}
+
+func lockRange1(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Authenticate User", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xF8,
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // "Set" method UID
+		0xf0, 0xf2,
+		0x01, // "Values"
+		0xf0, 0xf2,
+		0x07, // "ReadLocked"
+		0x01, // True
+		0xf3, 0xf2,
+		0x08, // "WriteLocked"
+		0x01, // True
+		0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	sendSecurityOutIn(pkt)
+	return true, 1
+}
+
+func unlockRange1(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Authenticate User", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xF8,
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // "Set" method UID
+		0xf0, 0xf2,
+		0x01, // "Values"
+		0xf0, 0xf2,
+		0x07, // "ReadLocked"
+		0x00, // False
+		0xf3, 0xf2,
+		0x08, // "WriteLocked"
+		0x00, // False
+		0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	sendSecurityOutIn(pkt)
+	return true, 1
+}
+
 func enableRange0RWLock(fp *os.File, g *tcgData) (bool, int) {
-	pkt := createPacket("Set Data Store Write", g, fp)
+	pkt := createPacket("Enable Range0 RW Lock", g, fp)
 
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -922,6 +1073,14 @@ func getSPSessionID(payload []byte) uint32 {
 		fmt.Printf("  []---- Invalid SessionID ----[]\n")
 	}
 	return returnVal
+}
+
+func getLockingRange1UID(payload []byte) []byte {
+	if payload[0x3c] == 0xa8 {
+		return payload[0x3d:0x45]
+	} else {
+		return nil
+	}
 }
 
 func authUser(fp *os.File, g *tcgData) (bool, int) {
