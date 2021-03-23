@@ -7,14 +7,16 @@ import (
 
 //noinspection ALL,GoSnakeCaseUsage
 const (
-	START_LIST  = 0xf0
-	END_LIST    = 0xf1
-	END_OF_DATA = 0xf9
+	START_LIST      = 0xf0
+	END_LIST        = 0xf1
+	END_OF_DATA     = 0xf9
+	tcgDeviceOpalV1 = 1
+	tcgDeviceOpalV2 = 2
+	tcgDeviceRuby   = 3
 )
 
 type tcgData struct {
-	opalDevice       bool
-	rubyDevice       bool
+	deviceType       int
 	lockingEnabled   bool
 	lockingSupported bool
 	comID            uint16
@@ -26,7 +28,39 @@ type tcgData struct {
 	range1UID        []byte
 }
 
+type commonCallOut struct {
+	method func(fp *os.File, data *tcgData) (bool, int)
+	name   string
+}
+
 var user1Pin = []byte{0x75, 0x73, 0x65, 0x72, 0x31,}
+
+var statusCodes = map[byte]string{
+	0x00: "Success",
+	0x01: "Not Authorized",
+	0x02: "Obsolete",
+	0x03: "SP Busy",
+	0x04: "SP Failed",
+	0x05: "SP Disabled",
+	0x06: "SP Frozen",
+	0x07: "No Sessions Available",
+	0x08: "Uniqueness Conflict",
+	0x09: "Insufficient Space",
+	0x0a: "Insufficient Rows",
+	0x0c: "Invalid Parameter",
+	0x0d: "Obsolete",
+	0x0e: "Obsolete",
+	0x0f: "TPer Malfunction",
+	0x10: "Transaction Failure",
+	0x11: "Response Overflow",
+	0x12: "Authority Locked Out",
+	0x3f: "Fail",
+}
+
+type nameStateDescriptor struct {
+	stateTable map[int]commonCallOut
+	helpString string
+}
 
 func sedCommand(fp *os.File) {
 	var ok bool
@@ -35,7 +69,7 @@ func sedCommand(fp *os.File) {
 
 	// Default to the device being an Opal device. It may not provide
 	// a feature code page 0x203 during Level 0 Discovery
-	tcgGlobal := &tcgData{true,false,false,false,
+	tcgGlobal := &tcgData{tcgDeviceOpalV1, false, false,
 		0, 0, 0x0, nil, "", "", nil}
 
 	if err := loadPSIDpairs(tcgGlobal); err != nil {
@@ -72,51 +106,28 @@ func sedCommand(fp *os.File) {
 	}
 }
 
-type commonCallOut struct {
-	method func(fp *os.File, data *tcgData) (bool, int)
-	name   string
-}
-
-var statusCodes = map[byte]string{
-	0x00: "Success",
-	0x01: "Not Authorized",
-	0x02: "Obsolete",
-	0x03: "SP Busy",
-	0x04: "SP Failed",
-	0x05: "SP Disabled",
-	0x06: "SP Frozen",
-	0x07: "No Sessions Available",
-	0x08: "Uniqueness Conflict",
-	0x09: "Insufficient Space",
-	0x0a: "Insufficient Rows",
-	0x0c: "Invalid Parameter",
-	0x0d: "Obsolete",
-	0x0e: "Obsolete",
-	0x0f: "TPer Malfunction",
-	0x10: "Transaction Failure",
-	0x11: "Response Overflow",
-	0x12: "Authority Locked Out",
-	0x3f: "Fail",
-}
-
-type nameStateDescriptor struct {
-	stateTable map[int]commonCallOut
-	helpString string
-}
-
 var nameToState = map[string]nameStateDescriptor{
 	"discovery":    {discoveryStateTable, "Run just discovery phase"},
 	"enable":       {enableStateTable, "Enable locking for drive"},
 	"revert":       {revertStateTable, "Revert drive to factory settings"},
-	"erase-opalv1": {eraseStateTable, "Secure erase drive"},
+	"erase-opalv1": {eraseOpalV1StateTable, "Secure Opal V1 erase drive"},
 	"pin":          {resetMasterStateTable, "CAUTION: Reset Master password"},
 	"master":       {masterRevertStateTable, "Revert using Master key"},
-	"erase":        {experimentalStateTable, "Experimental work"},
+	"erase":        {eraseStateTable, "Secure Erase drive"},
 	"lock":         {lockStateTable, "Lock Range 1"},
 	"unlock":       {unlockStateTable, "Unlock Range 1"},
+	"experiment":   {opalv1experiment, "Experiment for Opal v1 support"},
 }
 
-var experimentalStateTable = map[int]commonCallOut{
+var opalv1experiment = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openAdminSession, "Open Admin session"},
+	3: {closeSession, "Close Seession"},
+	4: {stopStateMachine, "Stop State Machine"},
+}
+
+var eraseStateTable = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
 	2: {openLockingSPSession, "Open SP Locking Session"},
@@ -187,7 +198,7 @@ var revertStateTable = map[int]commonCallOut{
 	5: {stopStateMachine, "Stop State Machine"},
 }
 
-var eraseStateTable = map[int]commonCallOut{
+var eraseOpalV1StateTable = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
 	2: {openAdminSession, "Open Admin Session"},
@@ -254,6 +265,10 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 	cdb[1] = 1
 	shortAtData(cdb, pkt.globalData.comID, 2)
 	intAtData(cdb, 1, 6)
+	if pkt.globalData.deviceType == tcgDeviceOpalV1 {
+		shortAtData(cdb, 0x8000, 4)
+	}
+	cdb[9] = 1
 
 	if _, err := sendUSCSI(pkt.fp, cdb, full, 0); err != nil {
 		fmt.Printf("Failed %s for device\n", pkt.description)
@@ -1189,7 +1204,7 @@ func updateComID(fp *os.File, g *tcgData) (bool, int) {
 	cdb := make([]byte, 12)
 	data := make([]byte, 512)
 
-	if g.opalDevice {
+	if g.deviceType == tcgDeviceOpalV2 {
 		// Section 3.3.4.3.1 Storage Architecture Core Spec v2.01_r1.00
 		cdb[1] = 2             // Protocol ID 2 == GET_COMID
 		shortAtData(cdb, 0, 2) // COMID must be equal zero
@@ -1198,18 +1213,9 @@ func updateComID(fp *os.File, g *tcgData) (bool, int) {
 		data[5] = 0
 		data[19] = 255
 
-		/*
-		cdb[0] = SECURITY_PROTO_OUT
-		if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
-			fmt.Printf("    Hmm... SECURITY_OUT failed for ComID request\n")
-		} else {
-			fmt.Printf("    SECURITY_OUT okay\n")
-		}
-		*/
-
 		cdb[0] = SECURITY_PROTO_IN
 		if dataLen, err := sendUSCSI(fp, cdb, data, 0); err != nil {
-			fmt.Printf("USCSI Protocol 2 failed, err=%s\n", err)
+			fmt.Printf("  USCSI Protocol 2 failed, assuming Opal v1\n")
 			return false, 1
 		} else {
 			if debugOutput {
@@ -1219,14 +1225,13 @@ func updateComID(fp *os.File, g *tcgData) (bool, int) {
 			converter := dataToInt{data, 0, 2}
 			g.comID = uint16(converter.getInt())
 		}
-	} else if g.rubyDevice {
+	} else if g.deviceType == tcgDeviceRuby {
 		if g.comID == 0 {
 			fmt.Printf("Failed to get Ruby ComID\n")
 			return false, 1
 		}
-	} else {
-		fmt.Printf("Device type uknown\n")
-		g.comID = 0x7ffe
+	} else if g.deviceType == tcgDeviceOpalV1 {
+		g.comID = 0x7fe
 	}
 	fmt.Printf("    ComID: 0x%x\n", g.comID)
 	return true, 0
@@ -1424,13 +1429,12 @@ var rubyMulitByte = []multiByteDump {
 }
 
 func dumpOpalV2Feature(data []byte, g *tcgData) {
-	g.opalDevice = true
+	g.deviceType = tcgDeviceOpalV2
 	doMultiByteDump(rubyMulitByte, data)
 }
 
 func dumpRubyFeature(data []byte, g *tcgData) {
-	g.rubyDevice = true
-	g.opalDevice = false
+	g.deviceType = tcgDeviceRuby
 	converter := dataToInt{data, 4,2}
 	g.comID = (uint16)(converter.getInt())
 	doMultiByteDump(rubyMulitByte, data)
@@ -1444,7 +1448,7 @@ var cnlMultiByte = []multiByteDump{
 
 var cnlBitMap = []bitMaskBitDump{
 	{4, 7, 0x1, "Range_C"},
-	{4, 6, 0x1, "Rance_P"},
+	{4, 6, 0x1, "Range_P"},
 }
 
 //noinspection GoUnusedParameter
