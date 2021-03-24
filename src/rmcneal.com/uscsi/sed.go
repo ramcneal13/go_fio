@@ -119,6 +119,12 @@ var nameToState = map[string]nameStateDescriptor{
 	"experiment":   {opalv1experiment, "Experiment for Opal v1 support"},
 }
 
+var deviceTypeToName = map[int]string{
+	tcgDeviceOpalV1: "Opal v1",
+	tcgDeviceOpalV2: "Opal v2",
+	tcgDeviceRuby:   "Ruby",
+}
+
 var opalv1experiment = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
@@ -182,11 +188,12 @@ var enableStateTable = map[int]commonCallOut{
 	15: {setDatastoreWrite, "Set Data Store Write Access"},
 	16: {setDatastoreRead, "Set Data Store Read Access"},
 	17: {enableRange0RWLock, "Enable Range0 RW Lock"},
-	18: {closeSession, "End SP Locking Session"},
-	19: {openUser1LockingSession, "Open Locking SP Session"},
-	20: {setDatastore, "Set Data Store"},
-	21: {closeSession, "Close Session"},
-	22: {stopStateMachine, "Stop State Machine"},
+	18: {setLockingRange1, "Set Locking Range 1"},
+	19: {closeSession, "End SP Locking Session"},
+	20: {openUser1LockingSession, "Open Locking SP Session"},
+	21: {setDatastore, "Set Data Store"},
+	22: {closeSession, "Close Session"},
+	23: {stopStateMachine, "Stop State Machine"},
 }
 
 var revertStateTable = map[int]commonCallOut{
@@ -267,8 +274,8 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 	intAtData(cdb, 1, 6)
 	if pkt.globalData.deviceType == tcgDeviceOpalV1 {
 		shortAtData(cdb, 0x8000, 4)
+		cdb[9] = 1
 	}
-	cdb[9] = 1
 
 	if _, err := sendUSCSI(pkt.fp, cdb, full, 0); err != nil {
 		fmt.Printf("Failed %s for device\n", pkt.description)
@@ -1196,6 +1203,13 @@ func runDiscovery(fp *os.File, g *tcgData) (bool, int) {
 			dumpMemory(data, dataLen, "  ")
 		}
 		dumpLevelZeroDiscovery(data, dataLen, g)
+		if name, ok := deviceTypeToName[g.deviceType]; ok {
+			fmt.Printf("  Device Type: %s\n", name)
+		} else {
+			fmt.Printf("  Failed to determine device type or unsupported device type set\n")
+			return false, 1
+		}
+
 	}
 	return true, 0
 }
