@@ -7,9 +7,9 @@ import (
 
 //noinspection ALL,GoSnakeCaseUsage
 const (
-	START_LIST      = 0xf0
-	END_LIST        = 0xf1
-	END_OF_DATA     = 0xf9
+	startList       = 0xf0
+	endList         = 0xf1
+	endOfData       = 0xf9
 	tcgDeviceOpalV1 = 1
 	tcgDeviceOpalV2 = 2
 	tcgDeviceRuby   = 3
@@ -116,7 +116,7 @@ var nameToState = map[string]nameStateDescriptor{
 	"erase":        {eraseStateTable, "Secure Erase drive"},
 	"lock":         {lockStateTable, "Lock Range 1"},
 	"unlock":       {unlockStateTable, "Unlock Range 1"},
-	"experiment":   {opalv1experiment, "Experiment for Opal v1 support"},
+	"experiment":   {opalv1experiment, "Debug helper for C code"},
 }
 
 var deviceTypeToName = map[int]string{
@@ -129,8 +129,9 @@ var opalv1experiment = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
 	2: {openAdminSession, "Open Admin session"},
-	3: {closeSession, "Close Seession"},
-	4: {stopStateMachine, "Stop State Machine"},
+	3: {getMSID, "Get MSID"},
+	4: {closeSession, "Close Seession"},
+	5: {stopStateMachine, "Stop State Machine"},
 }
 
 var eraseStateTable = map[int]commonCallOut{
@@ -248,8 +249,8 @@ func checkReturnStatus(reply []byte) bool {
 		return false
 	}
 	for offset := 0x38; offset < len(reply); offset++ {
-		if reply[offset] == END_OF_DATA {
-			if reply[offset+1] == START_LIST && reply[offset+5] == END_LIST {
+		if reply[offset] == endOfData {
+			if reply[offset+1] == startList && reply[offset+5] == endList {
 				status := reply[offset+2]
 				if status != 0 {
 					fmt.Printf("    ERROR: %s\n", statusCodes[status])
@@ -610,7 +611,7 @@ func copyMSID(g *tcgData, reply []byte) {
 			offset := 0
 
 			if tokenHeader == 0x80 {
-				msidLength = reply[i+2&0x0f]
+				msidLength = reply[i+2] & 0x0f
 				offset = i + 3
 			} else if tokenHeader == 0xd0 {
 				msidLength = reply[i+3]
@@ -763,7 +764,7 @@ func setDatastoreWrite(fp *os.File, g *tcgData) (bool, int) {
 }
 
 func setDatastoreRead(fp *os.File, g *tcgData) (bool, int) {
-	pkt := createPacket("Set Data Store Write", g, fp)
+	pkt := createPacket("Set Data Store Read", g, fp)
 
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
