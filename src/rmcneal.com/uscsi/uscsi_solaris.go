@@ -24,16 +24,6 @@ type uscsiCmd struct {
 	pathInstance       int64
 }
 
-const (
-	UscsiWrite    = 0
-	UscsiSilent   = 1
-	UscsiDiagnose = 2
-	UscsiIsolate  = 4
-	UscsiRead     = 8
-	UscsiReset    = 0x4000
-	UscsiRQEnable = 0x10000
-)
-
 func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 //	slice := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
 //	for offset := 0; offset < len(buf); offset += 512 {
@@ -41,8 +31,8 @@ func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 
 	var cmd uscsiCmd
 
-	senseBuf := make([]byte, 256)
-	cmd.flags = flags
+	senseBuf := make([]byte, 252) // Per SPC-3 standard, the maximum length of sense data is 252 bytes
+	cmd.flags = flags | UscsiRQEnable
 	switch cdb[0] {
 	case INQUIRY, SECURITY_PROTO_IN:
 		cmd.flags |= UscsiRead
@@ -62,6 +52,10 @@ func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 	cmd.senseRequestLen = int8(len(senseBuf))
 
 	if _, _, err := syscall.Syscall(54, fp.Fd(), uintptr((4 << 8)|201), uintptr(unsafe.Pointer(&cmd))); err != 0 {
+		if debugOutput > 0 {
+			fmt.Printf("    SenseBuf:\n")
+			dumpMemory(senseBuf, len(senseBuf), "    ")
+		}
 		return 0, fmt.Errorf("syscall error: %s", err)
 	}
 	if cmd.status != 0 {

@@ -145,7 +145,7 @@ func diskinfoLogSense(d *diskInfoData) {
 func scsiLogSenseCommand(fp *os.File) {
 
 	if data, length, err := scsiLogSense(fp, byte(pageRequest), 0); err == nil {
-		if debugOutput {
+		if debugOutput > 0 {
 			fmt.Printf("DataIn:\n")
 			for offset := 0; offset < length; offset += 16 {
 				curLen := min(16, length-offset)
@@ -202,7 +202,7 @@ func scsiLogSense(fp *os.File, page byte, subpage byte) ([]byte, int, error) {
 	cdb[3] = subpage
 	cdb[7] = 0xff
 	cdb[8] = 0xff
-	if debugOutput {
+	if debugOutput > 0 {
 		fmt.Printf("CDB:\n")
 		dumpMemory(cdb, len(cdb), "  ")
 	}

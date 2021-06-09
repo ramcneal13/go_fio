@@ -14,10 +14,21 @@ const (
 	SECURITY_PROTO_OUT = 0xb5
 )
 
+//noinspection ALL,GoUnusedConst
+const (
+	UscsiWrite    = 0
+	UscsiSilent   = 1
+	UscsiDiagnose = 2
+	UscsiIsolate  = 4
+	UscsiRead     = 8
+	UscsiReset    = 0x4000
+	UscsiRQEnable = 0x10000
+)
+
 var inputDevice string
 var pageRequest int
 var inquiryEVPD bool
-var debugOutput bool
+var debugOutput int
 var commandName string
 var scsiCommands map[string]func(*os.File)
 var showAll bool
@@ -39,8 +50,8 @@ func init() {
 	flag.IntVar(&pageRequest, "p", defaultPage, usagePage+" (shorthand)")
 	flag.BoolVar(&inquiryEVPD, "evpd", false, usageEVPD)
 	flag.BoolVar(&inquiryEVPD, "e", false, usageEVPD+" (shorthand)")
-	flag.BoolVar(&debugOutput, "debug", false, usageDebug)
-	flag.BoolVar(&debugOutput, "D", false, usageDebug+" (shorthand)")
+	flag.IntVar(&debugOutput, "debug", 0, usageDebug)
+	flag.IntVar(&debugOutput, "D", 0, usageDebug+" (shorthand)")
 	flag.StringVar(&commandName, "command", "", usageCommand)
 	flag.StringVar(&commandName, "C", "", usageCommand+" (shorthand)")
 	flag.BoolVar(&showAll, "all", false, "show all pages")

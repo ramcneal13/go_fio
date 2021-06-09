@@ -98,6 +98,7 @@ func sedCommand(fp *os.File) {
 		fmt.Printf("[%d]---- %s ----[]\n", currentState, callOut.name)
 		if ok, exitCode := callOut.method(fp, tcgGlobal); !ok {
 			if exitCode != 0 {
+				closeSession(fp, tcgGlobal)
 				os.Exit(exitCode)
 			}
 			return
@@ -115,8 +116,10 @@ var nameToState = map[string]nameStateDescriptor{
 	"master":       {masterRevertStateTable, "Revert using Master key"},
 	"erase":        {eraseStateTable, "Secure Erase drive"},
 	"lock":         {lockStateTable, "Lock Range 1"},
+	"msid-unlock":  {unlockMSIDStateTable, "Unlock using MSID"},
 	"unlock":       {unlockStateTable, "Unlock Range 1"},
 	"experiment":   {opalv1experiment, "Debug helper for C code"},
+	"reset":        {tcgResetStateTable, "Experimental Reset Code"},
 }
 
 var deviceTypeToName = map[int]string{
@@ -164,6 +167,20 @@ var unlockStateTable = map[int]commonCallOut{
 	5: {closeSession, "Close Session"},
 	6: {stopStateMachine, "Stop State Machine"},
 }
+
+var unlockMSIDStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openAdminSession, "Open Admin Session"},
+	3: {getMSID, "Get MSID"},
+	4: {closeSession, "Close Session"},
+	5: {openLockingMSIDSession, "Open MSID Locking Session"},
+	6: {retrieveLockingUID, "Retrieve Locking UID"},
+	7: {unlockRange1, "Unlock Range 1"},
+	8: {closeSession, "Close Session"},
+	9: {stopStateMachine, "Stop State Machine"},
+}
+
 var discoveryStateTable = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
@@ -179,7 +196,7 @@ var enableStateTable = map[int]commonCallOut{
 	5:  {openMSIDLockingSession, "Open Locking Session"},
 	6:  {setSIDpinFromMaster, "Set SID PIN from Master Request"},
 	7:  {closeSession, "Close Session"},
-	8:  {openAdminWithMasterKey, "Open PIN Locking Session"},
+	8:  {openAdminWithMasterKey, "Open Locking Session"},
 	9:  {activateLockingRequest, "Activate Locking Request"},
 	10: {closeSession, "Close Session"},
 	11: {openLockingSPSession, "Open SP Locking Session"},
@@ -237,6 +254,11 @@ var masterRevertStateTable = map[int]commonCallOut{
 	5: {stopStateMachine, "Stop State Machine"},
 }
 
+var tcgResetStateTable = map[int]commonCallOut{
+	0: {tcgReset, "TCG Reset"},
+	1: {stopStateMachine, "Stop State Machine"},
+}
+
 func checkReturnStatus(reply []byte) bool {
 	if len(reply) < 0x38 {
 		fmt.Printf("Invalid reply, doesn't include length in packet. Length %d\n", len(reply))
@@ -272,14 +294,14 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 	cdb[0] = SECURITY_PROTO_OUT
 	cdb[1] = 1
 	shortAtData(cdb, pkt.globalData.comID, 2)
-	intAtData(cdb, 1, 6)
-	if pkt.globalData.deviceType == tcgDeviceOpalV1 {
-		shortAtData(cdb, 0x8000, 4)
-		cdb[9] = 1
-	}
+	intAtData(cdb, 512, 6)
+	//	if pkt.globalData.deviceType == tcgDeviceOpalV1 {
+	//		shortAtData(cdb, 0x8000, 4)
+	//		cdb[9] = 1
+	//	}
 
 	if _, err := sendUSCSI(pkt.fp, cdb, full, 0); err != nil {
-		fmt.Printf("Failed %s for device\n", pkt.description)
+		fmt.Printf("[] ---- Failed %s for device ----[]\n", pkt.description)
 		return false, nil
 	}
 
@@ -288,7 +310,7 @@ func sendSecurityOutIn(pkt *comPacket) (bool, []byte) {
 	if _, err := sendUSCSI(pkt.fp, cdb, reply, 0); err != nil {
 		fmt.Printf("Failed SECURITY_PROTOCOL_IN for %s\n", pkt.description)
 		return false, nil
-	} else if debugOutput {
+	} else if debugOutput > 0 {
 		fmt.Printf("  []---- Response ----[]\n")
 		dumpMemory(reply, len(reply), "    ")
 	}
@@ -529,6 +551,49 @@ func openAdminWithMasterKey(fp *os.File, g *tcgData) (bool, int) {
 	}
 
 }
+
+func openLockingMSIDSession(fp *os.File, g *tcgData) (bool, int) {
+	g.spSessionID = 0
+	g.sequenceNum = 0
+	pkt := createPacket("Start Locking SP", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x02,
+		0xf0,
+		0x84, 0x10, 0x00, 0x00, 0x00,
+		0xa8, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x00, 0x02, // Locking SP UID
+		0x01, 0xf2, 0x00,
+	}
+
+	newBuf := make([]byte, len(hardCoded))
+	copy(newBuf, hardCoded)
+
+	if len(g.msid) <= 15 {
+		newBuf = append(newBuf, byte(0xa0|len(g.msid)))
+	} else {
+		newBuf = append(newBuf, byte(0xd0), byte(len(g.msid)))
+	}
+	for _, v := range g.msid {
+		newBuf = append(newBuf, byte(v))
+	}
+	newBuf = append(newBuf, 0xf3, 0xf2, 0x03, 0xa8, 0x00, 0x00, 0x00, 0x09, 0x00, 0x01, 0x00, 0x01, 0xf3, 0xf1,
+		0xf9, 0xf0, 0x00, 0x00, 0x00, 0xf1)
+
+	pkt.putIntInPayload(0, 4) // HSN
+	pkt.subpacket = newBuf
+	pkt.fini()
+
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		pkt.globalData.spSessionID = getSPSessionID(reply)
+		return true, 0
+	} else {
+		return false, 1
+	}
+}
+
 
 func openLockingSPSession(fp *os.File, g *tcgData) (bool, int) {
 	g.spSessionID = 0
@@ -786,7 +851,9 @@ func setDatastoreRead(fp *os.File, g *tcgData) (bool, int) {
 	}
 }
 
+//noinspection ALL
 func setLockingRange1(fp *os.File, g *tcgData) (bool, int) {
+	/*
 	pkt := createPacket("Set Locking Range1", g, fp)
 
 	hardCoded := []byte{
@@ -817,6 +884,7 @@ func setLockingRange1(fp *os.File, g *tcgData) (bool, int) {
 	pkt.fini()
 
 	sendSecurityOutIn(pkt)
+	*/
 	return true, 1
 }
 
@@ -826,7 +894,7 @@ func retrieveLockingUID(fp *os.File, g *tcgData) (bool, int) {
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0xf8,
-		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00, 0x01, // Locking Global UID
 		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x16, // "Get" method UID
 		0xf0, 0xf0, 0xf2,
 		0x03, // "startColumn"
@@ -882,7 +950,7 @@ func lockRange1(fp *os.File, g *tcgData) (bool, int) {
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 		0xF8,
-		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00, 0x01, // Locking Range1 UID
 		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // "Set" method UID
 		0xf0, 0xf2,
 		0x01, // "Values"
@@ -909,7 +977,7 @@ func unlockRange1(fp *os.File, g *tcgData) (bool, int) {
 	hardCoded := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 		0xF8,
-		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, // Locking Range1 UID
+		0xa8, 0x00, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00, 0x01, // Locking Range1 UID
 		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17, // "Set" method UID
 		0xf0, 0xf2,
 		0x01, // "Values"
@@ -1178,6 +1246,36 @@ func stopStateMachine(fp *os.File, g *tcgData) (bool, int) {
 	return false, 0
 }
 
+//noinspection ALL
+func tcgReset(fp *os.File, g *tcgData) (bool, int) {
+	cdb := make([]byte, 12)
+	data := make([]byte, 512)
+
+	cdb[0] = SECURITY_PROTO_OUT
+	cdb[1] = 2 // Protocol 2 for reset
+	cdb[2] = 7
+	cdb[3] = 0xff
+	cdb[4] = 0x80
+	intAtData(cdb, 1, 6)
+
+	if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
+		fmt.Printf("Send of Reset failed, err=%s\n", err)
+		//		return false, 1
+	} else {
+		fmt.Printf("Success!\n")
+		return true, 0
+	}
+
+	cdb[0] = SECURITY_PROTO_IN
+	if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
+		fmt.Printf("Recv of Reset failed, err=%s\n", err)
+		return false, 1
+	} else {
+		fmt.Printf("Success\n")
+		return true, 0
+	}
+}
+
 func runDiscovery(fp *os.File, g *tcgData) (bool, int) {
 
 	cdb := make([]byte, 12)
@@ -1190,17 +1288,24 @@ func runDiscovery(fp *os.File, g *tcgData) (bool, int) {
 	cdb[4] = 0x80 // INC_512 bit.
 	intAtData(cdb, 1, 6)
 
-	if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
-		fmt.Printf("Send of Level 0 discovery failed, err=%s\n", err)
-		return false, 1
-	}
+	/*
+		if _, err := sendUSCSI(fp, cdb, data, 0); err != nil {
+			fmt.Printf("Send of Level 0 discovery failed, err=%s\n", err)
+			return false, 1
+		}
+	*/
 
 	cdb[0] = SECURITY_PROTO_IN
+	if debugOutput > 0 {
+		fmt.Printf("  CDB for Discovery\n")
+		dumpMemory(cdb, len(cdb), "     ")
+	}
+
 	if dataLen, err := sendUSCSI(fp, cdb, data, 0); err != nil {
 		fmt.Printf("USCSI failed, err=%s\n", err)
 		return false, 1
 	} else {
-		if debugOutput {
+		if debugOutput > 0 {
 			dumpMemory(data, dataLen, "  ")
 		}
 		dumpLevelZeroDiscovery(data, dataLen, g)
@@ -1233,7 +1338,7 @@ func updateComID(fp *os.File, g *tcgData) (bool, int) {
 			fmt.Printf("  USCSI Protocol 2 failed, assuming Opal v1\n")
 			return false, 1
 		} else {
-			if debugOutput {
+			if debugOutput > 0 {
 				fmt.Printf("  []---- Response ----[]\n")
 				dumpMemory(data, dataLen, "    ")
 			}
@@ -1259,7 +1364,7 @@ func dumpLevelZeroDiscovery(data []byte, len int, g *tcgData) {
 		return
 	}
 
-	if debugOutput {
+	if debugOutput > 0 {
 		fmt.Printf("  []---- Response ----[]\n")
 		dumpMemory(data, len, "    ")
 	}
@@ -1292,20 +1397,21 @@ func dumpLevelZeroDiscovery(data []byte, len int, g *tcgData) {
 }
 
 type featureFuncName struct {
-	name string
-	dump func([]byte, *tcgData)
+	name       string
+	dump       func([]byte, *tcgData)
+	debugLevel int
 }
 
 var codeStr = map[int]featureFuncName {
-	0x0001: {"TPer", dumpTPerFeature},
-	0x0002: {"Locking", dumpLockingFeature},
-	0x0003: {"Geometry Reporting", dumpGeometryFeature},
-	0x0201: {"Opal Single User mode", dumpOpalSingleUser},
-	0x0202: {"Additional DataStore", dumpAdditionalDataStore},
-	0x0203: {"Opal v2.01_rev1.00 SSC", dumpOpalV2Feature},
-	0x0304: {"Ruby SSC", dumpRubyFeature},
-	0x0402: {"Set Block SID", dumpSetBlockSID},
-	0x0403: {"Configurable Namespace Locking", dumpCNL},
+	0x0001: {"TPer", dumpTPerFeature, 1},
+	0x0002: {"Locking", dumpLockingFeature, 1},
+	0x0003: {"Geometry Reporting", dumpGeometryFeature, 2},
+	0x0201: {"Opal Single User mode", dumpOpalSingleUser, 2},
+	0x0202: {"Additional DataStore", dumpAdditionalDataStore, 2},
+	0x0203: {"Opal v2.01_rev1.00 SSC", dumpOpalV2Feature, 2},
+	0x0304: {"Ruby SSC", dumpRubyFeature, 2},
+	0x0402: {"Set Block SID", dumpSetBlockSID, 2},
+	0x0403: {"Configurable Namespace Locking", dumpCNL, 2},
 }
 
 type desciptorCodeRanges struct {
@@ -1334,14 +1440,18 @@ func dumpDescriptor(data []byte, g *tcgData) int {
 
 	if _, ok := codeStr[code]; ok {
 		fmt.Printf("  Feature: %s\n", codeStr[code].name)
-		codeStr[code].dump(data, g)
-		fmt.Printf("\n")
+		if debugOutput >= codeStr[code].debugLevel {
+			codeStr[code].dump(data, g)
+			fmt.Printf("\n")
+		}
 	} else {
 		for _, v := range descriptorCodeRangeArray {
 			if code >= v.startRange && code <= v.endRange {
 				fmt.Printf("  Feature: %s (code: 0x%x)\n", v.name, code)
-				dumpMemory(data, featureLen, "    ")
-				fmt.Println()
+				if debugOutput >= 2 {
+					dumpMemory(data, featureLen, "    ")
+					fmt.Println()
+				}
 				break
 			}
 		}

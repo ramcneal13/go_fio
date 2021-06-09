@@ -45,7 +45,7 @@ func scsiReadCap(fp *os.File) ([]byte, int, error) {
 	cdb[1] = 0x10
 	cdb[12] = 1
 	cdb[13] = 0
-	if debugOutput {
+	if debugOutput > 0 {
 		fmt.Printf("CDB:\n")
 		dumpMemory(cdb, len(cdb), "    ")
 	}

@@ -267,7 +267,7 @@ func (p *comPacket) getFullPayload() []byte {
 	padding := make([]byte, 512 - len(full))
 	full = Append(full, padding)
 
-	if debugOutput {
+	if debugOutput > 0 {
 		fmt.Printf("  Header len: %d, payload len: %d, sub pkt len: %d, total: %d\n",
 			len(p.header), len(p.payload), len(p.subpacket), len(full))
 		dumpMemory(full, len(full), "  ")
