@@ -25,6 +25,14 @@ var protocolIdentifier = map[byte]string{
 	0xa: "SOP",
 }
 
+func boolToString(b bool) string {
+	if b {
+		return "true"
+	} else {
+		return "false"
+	}
+}
+
 func hexDump(buf []byte, n int, offset int64, offsetWidth int) {
 	if offsetWidth != 0 {
 		fmt.Printf("%0*x: ", offsetWidth, offset)

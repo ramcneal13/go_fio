@@ -118,7 +118,7 @@ var nameToState = map[string]nameStateDescriptor{
 	"lock":         {lockStateTable, "Lock Range 1"},
 	"msid-unlock":  {unlockMSIDStateTable, "Unlock using MSID"},
 	"unlock":       {unlockStateTable, "Unlock Range 1"},
-	"experiment":   {opalv1experiment, "Debug helper for C code"},
+	"experiment":   {opalv2experiment, "Debug helper for C code"},
 	"reset":        {tcgResetStateTable, "Experimental Reset Code"},
 }
 
@@ -128,13 +128,14 @@ var deviceTypeToName = map[int]string{
 	tcgDeviceRuby:   "Ruby",
 }
 
-var opalv1experiment = map[int]commonCallOut{
+var opalv2experiment = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
-	2: {openAdminSession, "Open Admin session"},
-	3: {getMSID, "Get MSID"},
-	4: {closeSession, "Close Seession"},
-	5: {stopStateMachine, "Stop State Machine"},
+	2: {openLockingSPSession, "Open SP Locking session"},
+	3: {setTryLimit, "Set Try Limit"},
+	4: {getCPINLimits, "Get C_PIN Limit Information"},
+	5: {closeSession, "Close Seession"},
+	6: {stopStateMachine, "Stop State Machine"},
 }
 
 var eraseStateTable = map[int]commonCallOut{
@@ -193,10 +194,10 @@ var enableStateTable = map[int]commonCallOut{
 	2:  {openAdminSession, "Open Admin Session"},
 	3:  {getMSID, "Get MSID"},
 	4:  {closeSession, "Close Session"},
-	5:  {openMSIDLockingSession, "Open Locking Session"},
+	5:  {openMSIDLockingSession, "Open MSID Locking Session"},
 	6:  {setSIDpinFromMaster, "Set SID PIN from Master Request"},
 	7:  {closeSession, "Close Session"},
-	8:  {openAdminWithMasterKey, "Open Locking Session"},
+	8:  {openAdminWithMasterKey, "Open Master Locking Session"},
 	9:  {activateLockingRequest, "Activate Locking Request"},
 	10: {closeSession, "Close Session"},
 	11: {openLockingSPSession, "Open SP Locking Session"},
@@ -217,7 +218,7 @@ var enableStateTable = map[int]commonCallOut{
 var revertStateTable = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
-	2: {openPSIDLockingSession, "Open Locking Session"},
+	2: {openPSIDLockingSession, "Open PSID Locking Session"},
 	3: {revertTPer, "Revert"},
 	4: {closeSession, "Close Session"},
 	5: {stopStateMachine, "Stop State Machine"},
@@ -637,6 +638,55 @@ func openLockingSPSession(fp *os.File, g *tcgData) (bool, int) {
 	}
 }
 
+func getCPINLimits(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Get Try Limit", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x01, 0x00, 0x01,
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x16,
+		0xf0, 0xf0, 0xf2, 0x03, 0x04, 0xf3, 0xf2, 0x04, 0x07, 0xf3, 0xf1, 0xf1,
+		0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	if ok, reply := sendSecurityOutIn(pkt); ok {
+		scanLimitTableReply(reply)
+		return true, 0
+	} else {
+		fmt.Printf("Hmm ... try again\n")
+		return false, 1
+	}
+}
+
+func setTryLimit(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Get Try Limit", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8, // Call Token
+		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x01, 0x00, 0x01,
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17,
+		0xf0, 0xf2, 0x01, 0xf0, 0xf2, 0x05, 0x00, 0xf3, 0xf1, 0xf3, 0xf1,
+		0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	if ok, _ := sendSecurityOutIn(pkt); ok {
+		fmt.Printf("    DID IT WORK\n");
+		return true, 0
+	} else {
+		fmt.Printf("    Hmm ... try again\n")
+		return true, 0
+	}
+}
+
+
 func getMSID(fp *os.File, g *tcgData) (bool, int) {
 	pkt := createPacket("Get MSID", g, fp)
 
@@ -665,6 +715,57 @@ func getMSID(fp *os.File, g *tcgData) (bool, int) {
 		return true, 0
 	} else {
 		return false, 1
+	}
+}
+
+type decodeItem struct {
+	method func([]byte, string, int) int
+	name   string
+}
+
+var decodeItemTable = map[byte]decodeItem{
+	5: {decodeLimitInt, "Try Limit"},
+	6: {decodeLimitInt, "Tries"},
+	7: {decodeLimitBoolean, "Persistence"},
+}
+
+func decodeLimitInt(data []byte, name string, nameFieldSize int) int {
+	tokenHeader := data[0] & 0xf0
+	length := 0
+	offset := 0
+
+	if tokenHeader == 0x80 {
+		length = int(data[0] & 0x0f)
+		offset = 1
+	} else if tokenHeader == 0xd0 {
+		length = int(data[1])
+		offset = 2
+	} else {
+		return 1
+	}
+	convert := dataToInt{data, offset, length}
+	fmt.Printf("    %-*s : %d\n", nameFieldSize, name, convert.getInt())
+	return offset + length
+}
+
+func decodeLimitBoolean(data []byte, name string, nameFieldSize int) int {
+	fmt.Printf("    %-*s : %s\n", nameFieldSize, name, boolToString(data[0] > 0))
+	return 1
+}
+
+func scanLimitTableReply(reply []byte) {
+	nameFieldSize := 0
+	for _, v := range decodeItemTable {
+		if len(v.name) > nameFieldSize {
+			nameFieldSize = len(v.name)
+		}
+	}
+	for i := 0; i < len(reply); i++ {
+		if reply[i] == 0xf2 {
+			if item, ok := decodeItemTable[reply[i+1]]; ok {
+				i += item.method(reply[i+2:], item.name, nameFieldSize)
+			}
+		}
 	}
 }
 
@@ -804,6 +905,30 @@ func changeUser1Password(fp *os.File, g *tcgData) (bool, int) {
 		return false, 1
 	}
 }
+
+func setCPINDatastoreWrite(fp *os.File, g *tcgData) (bool, int) {
+	pkt := createPacket("Set Data Store Write", g, fp)
+
+	hardCoded := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf8,
+		0xa8, 0x00, 0x00, 0x00, 0x08, 0x00, 0x03, 0xfc, 0x01,
+		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17,
+		0xf0, 0xf2, 0x01, 0xf0, 0xf2, 0x03, 0xf0, 0xf2, 0xa4, 0x00, 0x00, 0x0c, 0x05,
+		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x01, 0x00, 0x01,
+		0xf3, 0xf1, 0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
+		0xf0, 0x00, 0x00, 0x00, 0xf1,
+	}
+	pkt.subpacket = hardCoded
+	pkt.fini()
+
+	if ok, _ := sendSecurityOutIn(pkt); ok {
+		return true, 0
+	} else {
+		return false, 1
+	}
+}
+
 
 func setDatastoreWrite(fp *os.File, g *tcgData) (bool, int) {
 	pkt := createPacket("Set Data Store Write", g, fp)
@@ -1398,7 +1523,7 @@ func dumpLevelZeroDiscovery(data []byte, len int, g *tcgData) {
 
 type featureFuncName struct {
 	name       string
-	dump       func([]byte, *tcgData)
+	dump       func([]byte, *tcgData, *featureFuncName)
 	debugLevel int
 }
 
@@ -1440,18 +1565,17 @@ func dumpDescriptor(data []byte, g *tcgData) int {
 
 	if _, ok := codeStr[code]; ok {
 		fmt.Printf("  Feature: %s\n", codeStr[code].name)
-		if debugOutput >= codeStr[code].debugLevel {
-			codeStr[code].dump(data, g)
-			fmt.Printf("\n")
+		funcs := codeStr[code]
+		funcs.dump(data, g, &funcs)
+		if debugOutput >= funcs.debugLevel {
+			fmt.Println()
 		}
 	} else {
 		for _, v := range descriptorCodeRangeArray {
 			if code >= v.startRange && code <= v.endRange {
 				fmt.Printf("  Feature: %s (code: 0x%x)\n", v.name, code)
-				if debugOutput >= 2 {
-					dumpMemory(data, featureLen, "    ")
-					fmt.Println()
-				}
+				dumpMemory(data, featureLen, "    ")
+				fmt.Println()
 				break
 			}
 		}
@@ -1468,8 +1592,10 @@ var dataStoreMultiByte = []multiByteDump {
 }
 
 //noinspection GoUnusedParameter
-func dumpAdditionalDataStore(data []byte, g *tcgData) {
-	doMultiByteDump(dataStoreMultiByte, data)
+func dumpAdditionalDataStore(data []byte, g *tcgData, n *featureFuncName) {
+	if debugOutput >= n.debugLevel {
+		doMultiByteDump(dataStoreMultiByte, data)
+	}
 }
 
 var tperBitMap = []bitMaskBitDump{
@@ -1484,8 +1610,10 @@ var tperBitMap = []bitMaskBitDump{
 }
 
 //noinspection GoUnusedParameter
-func dumpTPerFeature(data []byte, g *tcgData) {
-	doBitDump(tperBitMap, data)
+func dumpTPerFeature(data []byte, g *tcgData, n *featureFuncName) {
+	if debugOutput >= n.debugLevel {
+		doBitDump(tperBitMap, data)
+	}
 }
 
 var lockingBitMap = []bitMaskBitDump {
@@ -1511,19 +1639,23 @@ var singleUserMultiByte = []multiByteDump{
 }
 
 //noinspection GoUnusedParameter
-func dumpOpalSingleUser(data []byte, g *tcgData) {
-	doBitDump(singleUserBitMap, data)
-	doMultiByteDump(singleUserMultiByte, data)
+func dumpOpalSingleUser(data []byte, g *tcgData, n *featureFuncName) {
+	if debugOutput >= n.debugLevel {
+		doBitDump(singleUserBitMap, data)
+		doMultiByteDump(singleUserMultiByte, data)
+	}
 }
 
-func dumpLockingFeature(data []byte, g *tcgData) {
+func dumpLockingFeature(data []byte, g *tcgData, n *featureFuncName) {
 	if data[4] & 1 == 1 {
 		g.lockingSupported = true
 	}
 	if ((data[4] >> 1) & 1) == 1 {
 		g.lockingEnabled = true
 	}
-	doBitDump(lockingBitMap, data)
+	if debugOutput >= n.debugLevel {
+		doBitDump(lockingBitMap, data)
+	}
 }
 
 var geometryBitMap = []bitMaskBitDump{
@@ -1539,9 +1671,11 @@ var geometryMultiByte = []multiByteDump{
 }
 
 //noinspection GoUnusedParameter
-func dumpGeometryFeature(data []byte, g *tcgData) {
-	doBitDump(geometryBitMap, data)
-	doMultiByteDump(geometryMultiByte, data)
+func dumpGeometryFeature(data []byte, g *tcgData, n *featureFuncName) {
+	if debugOutput >= n.debugLevel {
+		doBitDump(geometryBitMap, data)
+		doMultiByteDump(geometryMultiByte, data)
+	}
 }
 
 var rubyMulitByte = []multiByteDump {
@@ -1553,16 +1687,20 @@ var rubyMulitByte = []multiByteDump {
 	{11,2,"# locking User SPs supported"},
 }
 
-func dumpOpalV2Feature(data []byte, g *tcgData) {
+func dumpOpalV2Feature(data []byte, g *tcgData, n *featureFuncName) {
 	g.deviceType = tcgDeviceOpalV2
-	doMultiByteDump(rubyMulitByte, data)
+	if debugOutput >= n.debugLevel {
+		doMultiByteDump(rubyMulitByte, data)
+	}
 }
 
-func dumpRubyFeature(data []byte, g *tcgData) {
+func dumpRubyFeature(data []byte, g *tcgData, n *featureFuncName) {
 	g.deviceType = tcgDeviceRuby
 	converter := dataToInt{data, 4,2}
 	g.comID = (uint16)(converter.getInt())
-	doMultiByteDump(rubyMulitByte, data)
+	if debugOutput >= n.debugLevel {
+		doMultiByteDump(rubyMulitByte, data)
+	}
 }
 
 var cnlMultiByte = []multiByteDump{
@@ -1577,9 +1715,11 @@ var cnlBitMap = []bitMaskBitDump{
 }
 
 //noinspection GoUnusedParameter
-func dumpCNL(data []byte, g *tcgData) {
-	doBitDump(cnlBitMap, data)
-	doMultiByteDump(cnlMultiByte, data)
+func dumpCNL(data []byte, g *tcgData, n *featureFuncName) {
+	if debugOutput >= n.debugLevel {
+		doBitDump(cnlBitMap, data)
+		doMultiByteDump(cnlMultiByte, data)
+	}
 }
 
 var sbsBitMap = []bitMaskBitDump{
@@ -1591,6 +1731,8 @@ var sbsBitMap = []bitMaskBitDump{
 }
 
 //noinspection GoUnusedParameter
-func dumpSetBlockSID(data []byte, g *tcgData) {
-	doBitDump(sbsBitMap, data)
+func dumpSetBlockSID(data []byte, g *tcgData, n *featureFuncName) {
+	if debugOutput >= n.debugLevel {
+		doBitDump(sbsBitMap, data)
+	}
 }
