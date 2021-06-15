@@ -307,6 +307,7 @@ func designationDescDecode(data []byte) int {
 	switch data[1] & 0xf {
 	case 0, 2, 5, 6, 7, 9:
 		fmt.Printf("    ---- Not Decoded yet (%d) ----\n", data[1]&0xf)
+		dumpMemory(data, int(data[3]+4), "    ")
 
 	case 1:
 		converter := dataToInt{data, 4, 8}

@@ -110,16 +110,17 @@ func sedCommand(fp *os.File) {
 var nameToState = map[string]nameStateDescriptor{
 	"discovery":    {discoveryStateTable, "Run just discovery phase"},
 	"enable":       {enableStateTable, "Enable locking for drive"},
-	"revert":       {revertStateTable, "Revert drive to factory settings"},
-	"erase-opalv1": {eraseOpalV1StateTable, "Secure Opal V1 erase drive"},
-	"pin":          {resetMasterStateTable, "CAUTION: Reset Master password"},
-	"master":       {masterRevertStateTable, "Revert using Master key"},
-	"erase":        {eraseStateTable, "Secure Erase drive"},
-	"lock":         {lockStateTable, "Lock Range 1"},
-	"msid-unlock":  {unlockMSIDStateTable, "Unlock using MSID"},
-	"unlock":       {unlockStateTable, "Unlock Range 1"},
-	"experiment":   {opalv2experiment, "Debug helper for C code"},
-	"reset":        {tcgResetStateTable, "Experimental Reset Code"},
+	"revert":         {revertStateTable, "Revert drive to factory settings"},
+	"erase-opalv1":   {eraseOpalV1StateTable, "Secure Opal V1 erase drive"},
+	"pin":            {resetMasterStateTable, "CAUTION: Reset Master password"},
+	"master":         {masterRevertStateTable, "Revert using Master key"},
+	"erase":          {eraseStateTable, "Secure Erase drive"},
+	"lock":           {lockStateTable, "Lock Range 1"},
+	"msid-unlock":    {unlockMSIDStateTable, "Unlock using MSID"},
+	"unlock":         {unlockStateTable, "Unlock Range 1"},
+	"get-cpin-limit": {getCPINLimitStateTable, "Debug helper for C code"},
+	"reset":          {tcgResetStateTable, "Experimental Reset Code"},
+	"msid-auth":      {msidAuthStateTable, "Authenticate with MSID"},
 }
 
 var deviceTypeToName = map[int]string{
@@ -128,7 +129,18 @@ var deviceTypeToName = map[int]string{
 	tcgDeviceRuby:   "Ruby",
 }
 
-var opalv2experiment = map[int]commonCallOut{
+var msidAuthStateTable = map[int]commonCallOut{
+	0: {runDiscovery, "Discovery"},
+	1: {updateComID, "Update COMID"},
+	2: {openAdminSession, "Open Admin Session"},
+	3: {getMSID, "Get MSID"},
+	4: {closeSession, "Close Session"},
+	5: {openMSIDLockingSession, "Open MSID Session"},
+	6: {closeSession, "CloseSession"},
+	7: {stopStateMachine, "Stop State Machine"},
+}
+
+var getCPINLimitStateTable = map[int]commonCallOut{
 	0: {runDiscovery, "Discovery"},
 	1: {updateComID, "Update COMID"},
 	2: {openLockingSPSession, "Open SP Locking session"},
@@ -678,7 +690,7 @@ func setTryLimit(fp *os.File, g *tcgData) (bool, int) {
 	pkt.fini()
 
 	if ok, _ := sendSecurityOutIn(pkt); ok {
-		fmt.Printf("    DID IT WORK\n");
+		fmt.Printf("    DID IT WORK\n")
 		return true, 0
 	} else {
 		fmt.Printf("    Hmm ... try again\n")
@@ -905,30 +917,6 @@ func changeUser1Password(fp *os.File, g *tcgData) (bool, int) {
 		return false, 1
 	}
 }
-
-func setCPINDatastoreWrite(fp *os.File, g *tcgData) (bool, int) {
-	pkt := createPacket("Set Data Store Write", g, fp)
-
-	hardCoded := []byte{
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0xf8,
-		0xa8, 0x00, 0x00, 0x00, 0x08, 0x00, 0x03, 0xfc, 0x01,
-		0xa8, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x17,
-		0xf0, 0xf2, 0x01, 0xf0, 0xf2, 0x03, 0xf0, 0xf2, 0xa4, 0x00, 0x00, 0x0c, 0x05,
-		0xa8, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x01, 0x00, 0x01,
-		0xf3, 0xf1, 0xf3, 0xf1, 0xf3, 0xf1, 0xf9,
-		0xf0, 0x00, 0x00, 0x00, 0xf1,
-	}
-	pkt.subpacket = hardCoded
-	pkt.fini()
-
-	if ok, _ := sendSecurityOutIn(pkt); ok {
-		return true, 0
-	} else {
-		return false, 1
-	}
-}
-
 
 func setDatastoreWrite(fp *os.File, g *tcgData) (bool, int) {
 	pkt := createPacket("Set Data Store Write", g, fp)
