@@ -24,6 +24,17 @@ type uscsiCmd struct {
 	pathInstance       int64
 }
 
+func getMediaInfo(fp *os.File) (*dkiocGetMediaInfoExt, error) {
+	var cmd dkiocGetMediaInfoExt
+
+	// DKIOCGMEDIAINFOEXT is (4 << 8) | 48
+	if _, _, err := syscall.Syscall(54, fp.Fd(), uintptr((4<<8)|42), uintptr(unsafe.Pointer(&cmd))); err != 0 {
+		return nil, fmt.Errorf("ioctl call failed: err=%s", err)
+	} else {
+		return &cmd, nil
+	}
+}
+
 func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 //	slice := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
 //	for offset := 0; offset < len(buf); offset += 512 {

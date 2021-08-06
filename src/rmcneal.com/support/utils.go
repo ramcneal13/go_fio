@@ -259,6 +259,7 @@ func DisplayStruct(v interface{}, printer *Printer) {
 
 	columns := (width - 8) / (maxName + maxValue + 1)
 	if columns == 0 {
+		maxValue = width - maxName - 14
 		columns = 1
 	}
 
@@ -266,8 +267,18 @@ func DisplayStruct(v interface{}, printer *Printer) {
 	for i := 0; i < s.NumField(); i++ {
 		f := s.Field(i)
 		if f.CanSet() {
-			printer.Send("%*s:%*v", maxName, convertFieldName(typeOfT.Field(i).Name),
-				maxValue, f.Interface())
+			if f.Kind() == reflect.String && columns == 1 {
+				if len(f.String()) > (width - maxName - 2) {
+					printer.Send("%*s:%*s ...", maxName, convertFieldName(typeOfT.Field(i).Name),
+						maxValue, f.String()[0:maxValue])
+				} else {
+					printer.Send("%*s:%*s", maxName, convertFieldName(typeOfT.Field(i).Name),
+						maxValue, f.String())
+				}
+			} else {
+				printer.Send("%*s:%*v", maxName, convertFieldName(typeOfT.Field(i).Name),
+					maxValue, f.Interface())
+			}
 			if ((i % columns) == (columns - 1)) && (i != (s.NumField() - 1)) {
 				printer.Send("\n\t")
 			}

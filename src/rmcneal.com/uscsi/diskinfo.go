@@ -6,21 +6,54 @@ import (
 	"strings"
 	"rmcneal.com/support"
 	"flag"
+	"sort"
 )
 
 type yesNo bool
+
+/*
+ * If I ever get around to supporting this on OSX or Linux this structure will need to change to be more
+ * generic in nature.
+ */
+type dkiocGetMediaInfoExt struct {
+	mediaType     uint
+	lbsize        uint
+	capacity      uint64
+	physBlockSize uint
+	isSSD         uint
+	rpm           uint
+}
 
 type diskInfoData struct {
 	name         string
 	isSSD        yesNo
 	wearValue    int
-	capacity     int64
+	capacity     uint64
 	pathToDevice string
 	vendor       string
 	productID    string
 	serialNumber string
 	fp           *os.File
 	problem      error
+}
+
+type diskInfoArray struct {
+	array []diskInfoData
+}
+
+// Len is part of sort.Interface.
+func (a *diskInfoArray) Len() int {
+	return len(a.array)
+}
+
+// Swap is part of sort.Interface.
+func (a *diskInfoArray) Swap(i, j int) {
+	a.array[i], a.array[j] = a.array[j], a.array[i]
+}
+
+// Less is part of sort.Interface.
+func (a *diskInfoArray) Less(i, j int) bool {
+	return a.array[i].name < a.array[j].name
 }
 
 type processName struct {
@@ -72,7 +105,7 @@ func diskInfo(fp *os.File) {
 			d := gatherData(name)
 			if d.problem == nil {
 				fmt.Printf("%s %s %s %s | %s\n", d.name, d.vendor, d.productID,
-					support.Humanize(d.capacity, 1), d.isSSD)
+					support.Humanize(int64(d.capacity), 1), d.isSSD)
 			}
 		}
 	} else {
@@ -115,12 +148,16 @@ func runPostProcessing(diskList []string) {
 	for _, r := range processedList {
 		maxDeviceName = max(maxDeviceName, len(r.name))
 	}
+
+	sortedArray := &diskInfoArray{processedList}
+	sort.Sort(sortedArray)
+
 	fmt.Printf("  %-*s   %-*s   %-*s   %-*s   SSD (wear)\n", maxDeviceName, "Device Name",
 		8, "Vendor", 16, "Product ID", 6, "Size")
 	fmt.Printf("%s\n", support.DashLine(maxDeviceName+2, 8+2, 16+2, 6+2, 10+2))
-	for _, r := range processedList {
+	for _, r := range sortedArray.array {
 		fmt.Printf("| %-*s | %s | %s | %6s | %s", maxDeviceName, r.name, r.vendor, r.productID,
-			support.Humanize(r.capacity, 1), r.isSSD)
+			support.Humanize(int64(r.capacity), 1), r.isSSD)
 		if r.isSSD {
 			fmt.Printf(" (%d%%)", r.wearValue)
 		}
@@ -137,6 +174,18 @@ func (p *processName) Run() {
 	}
 }
 
+func diskMediaInfo(d *diskInfoData) {
+	if cmd, err := getMediaInfo(d.fp); err == nil {
+		if cmd.isSSD != 0 {
+			d.isSSD = true
+		} else {
+			d.isSSD = false
+		}
+		fmt.Printf("cap: %d, lbsize=%d, physSize=%d\n", cmd.capacity, cmd.lbsize, cmd.physBlockSize)
+		d.capacity = cmd.capacity * 512
+	}
+}
+
 func gatherData(name string) diskInfoData {
 	reply := diskInfoData{name, false, 0, 0,"/dev/rdsk/" + name,
 		"", "", "",nil, nil}
@@ -146,6 +195,7 @@ func gatherData(name string) diskInfoData {
 		diskinfoInquiry(&reply)
 		diskinfoLogSense(&reply)
 		diskinfoReadCap(&reply)
+		diskMediaInfo(&reply)
 		fp.Close()
 	} else {
 		reply.problem = err

@@ -15,7 +15,7 @@ func diskinfoReadCap(d *diskInfoData) {
 		totalBlocks := converter.getInt64()
 		converter.setOffsetCount(8, 4)
 		blockSize := converter.getInt64()
-		d.capacity = totalBlocks * blockSize
+		d.capacity = uint64(totalBlocks * blockSize)
 	}
 }
 
