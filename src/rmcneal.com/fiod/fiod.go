@@ -131,6 +131,7 @@ func main() {
 		track.WaitForThreads()
 		track.DisplayReset()
 		stats.Send(support.StatsRecord{OpType: support.StatDisplay})
+		stats.Flush()
 
 		track.SetTitle("Clean up")
 		track.DisplayCount()
