@@ -7,6 +7,8 @@ import (
 	"os"
 	"reflect"
 	"time"
+	"io"
+	"net"
 )
 
 const (
@@ -34,6 +36,7 @@ type StatsState struct {
 	// first character to keep them private to the structure.
 	// If not ClearStruct() will zero them.
 	fp          *os.File
+	fiow        io.Writer
 	incoming    chan StatsRecord
 	statusChans chan string
 	gcfg        *JobData
@@ -95,8 +98,16 @@ func StatsInit(global *JobData, printer *Printer) (*StatsState, error) {
 	if fp, err := os.OpenFile(global.Record_File, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666); err != nil {
 		return nil, err
 	} else {
-		s.fp = fp
+		s.fiow = fp
 		_, _ = fmt.Fprintln(fp, "# Time, IOPS, Read B/W, Write B/W")
+	}
+
+	if global.Record_Network != "" {
+		if np, err := net.Dial("tcp", global.Record_Network); err != nil {
+			return nil, err
+		} else {
+			s.fiow = np
+		}
 	}
 
 	go s.StatsWorker()
@@ -195,9 +206,16 @@ func (s *StatsState) StatsWorker() {
 			}
 
 		case t := <-recordMarkers:
-			_, _ = fmt.Fprintf(s.fp, "%02d:%02d:%02d, %d, %d, %d\n",
-				t.Hour(), t.Minute(), t.Second(), s.Iops-recordIOPS,
-				s.ReadBW-recordRead, s.WriteBW-recordWrite)
+			ct := t.Unix()
+			_, _ = fmt.Fprintf(s.fiow, "%s-read %d %d\n", s.gcfg.Graphite_Metric,
+				s.ReadBW-recordRead, ct)
+
+			_, _ = fmt.Fprintf(s.fiow, "%s-write %d %d\n", s.gcfg.Graphite_Metric,
+				s.WriteBW-recordWrite, ct)
+
+			_, _ = fmt.Fprintf(s.fiow, "%s-iops %d %d\n", s.gcfg.Graphite_Metric,
+				s.Iops-recordIOPS, ct)
+
 			recordIOPS = s.Iops
 			recordRead = s.ReadBW
 			recordWrite = s.WriteBW

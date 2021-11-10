@@ -24,6 +24,26 @@ type uscsiCmd struct {
 	pathInstance       int64
 }
 
+func osSpecificOpen(inputFile string) (*os.File, error) {
+	var fp *os.File
+	var err error
+
+	if fp, err = os.Open(inputDevice); err != nil {
+		/*
+		 * See if the user just gave us the last component part of the device name.
+		 */
+		if fp, err = os.Open("/dev/rdsk/" + inputDevice); err == nil {
+			inputDevice = "/dev/rdsk/" + inputDevice
+		} else if fp, err = os.Open("/dev/rdsk/" + inputDevice + "p0"); err == nil {
+			inputDevice = "/dev/rdsk/" + inputDevice + "p0"
+		} else {
+			fmt.Printf("%s\n", err)
+			os.Exit(1)
+		}
+	}
+	return fp, err
+}
+
 func getMediaInfo(fp *os.File) (*dkiocGetMediaInfoExt, error) {
 	var cmd dkiocGetMediaInfoExt
 
@@ -70,7 +90,7 @@ func sendUSCSI(fp *os.File, cdb []byte, data []byte, flags int32) (int, error) {
 		return 0, fmt.Errorf("syscall error: %s", err)
 	}
 	if cmd.status != 0 {
-		return 0, fmt.Errorf("status: %d", cmd.status)
+		return 0, fmt.Errorf("Status: %d", cmd.status)
 	}
 
 	return int(cmd.bufLen - cmd.resid), nil

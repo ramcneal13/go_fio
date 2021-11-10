@@ -1,10 +1,30 @@
-#!/bin/sh -x
+#!/bin/sh
+build_one() {
+	env GOOS=$1 GOARCH=$2 go build -o bin/$3-$1-$2 rmcneal.com/$3
+	if [ $? -ne 0 ] ; then
+		printf "$3 failed"
+		exit 1
+	fi
+}
+
 for GOOS in darwin linux solaris; do
-    # No need to build for 386 these days.
-    for GOARCH in amd64 arm; do
-        env GOOS=$GOOS GOARCH=$GOARCH go build -o bin/fiod-$GOOS-$GOARCH rmcneal.com/fiod
-        env GOOS=$GOOS GOARCH=$GOARCH go build -o bin/auto-fiod-$GOOS-$GOARCH auto-fiod
-        env GOOS=$GOOS GOARCH=$GOARCH go build -o bin/hexdmp-$GOOS-$GOARCH rmcneal.com/hexdmp
-        env GOOS=$GOOS GOARCH=$GOARCH go build -o bin/uscsi-$GOOS-$GOARCH rmcneal.com/uscsi
-    done
+	# No need to build for 386 these days.
+	printf "Working on $GOOS ... "
+	GOARCH=amd64
+        printf "$GOARCH ("
+	for prog in fiod auto-fiod hexdmp uscsi ; do
+		printf "$prog "
+		build_one $GOOS $GOARCH $prog
+	done
+	printf ")\n"
+	if [ "$GOOS" = "linux" ] ; then
+		printf "Working on $GOOS ... "
+		GOARCH=arm
+		printf "$GOARCH ("
+		for prog in fiod auto-fiod hexdmp uscsi ; do
+			printf "$prog "
+			build_one $GOOS $GOARCH $prog
+		done
+		printf ")\n"
+	fi
 done

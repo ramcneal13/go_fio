@@ -5,6 +5,11 @@ import (
 	"fmt"
 )
 
+func osSpecificOpen(inputDevice string) (*os.File, error) {
+	fp, err := os.OpenFile(inputDevice, os.O_RDWR, 0)
+	return fp, err
+}
+
 func getMediaInfo(fp *os.File) (*dkiocGetMediaInfoExt, error) {
 	return nil, fmt.Errorf("linux version not supported")
 }

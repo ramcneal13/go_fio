@@ -412,7 +412,7 @@ func decodeLogPage15(fp *os.File, data []byte, dataLen int) {
 func decodeBackgroundScan(data []byte, dataLen int) int {
 	converter := dataToInt{data, 4, 4}
 	fmt.Printf("    Accumulated power on minutes: %d\n", converter.getInt64())
-	fmt.Printf("    Scan status: %d\n", data[9])
+	fmt.Printf("    Scan Status: %d\n", data[9])
 
 	converter.setOffsetCount(10, 2)
 	fmt.Printf("    Number of scans performed: %d\n", converter.getInt())

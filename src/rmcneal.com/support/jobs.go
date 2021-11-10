@@ -264,9 +264,9 @@ func (j *Job) genAccessData() {
 	for j.threadRun {
 		j.nextBlks <- j.oneAD()
 	}
-	ad := AccessData{0, StopType, 0}
+
 	for i := 0; i < j.JobParams.IODepth; i++ {
-		j.nextBlks <- ad
+		j.nextBlks <- AccessData{0, StopType, 0}
 	}
 }
 

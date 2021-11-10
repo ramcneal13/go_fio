@@ -112,14 +112,14 @@ func main() {
 		}
 		track.DisplayReset()
 
+		track.SetTitle("Run")
+		track.DisplaySet(func() { printer.Send(stats.String()) })
+
 		// Clear out the stats just before starting the jobs. The timer is running
 		// in the stats thread which means the time spent during the prepare phase
 		// would be counted against the elapsed time for these threads if we don't
 		// clear the stats now.
 		stats.Send(support.StatsRecord{OpType: support.StatClear})
-
-		track.SetTitle("Run")
-		track.DisplaySet(func() { printer.Send(stats.String()) })
 
 		for _, name := range perBarrier {
 			job := jobs[name]

@@ -552,7 +552,7 @@ var pageB0BlockLimitsBytes = []multiByteDump{
 func decodeInquiryPageB0(data []byte, dataLen int) {
 	doMultiByteDump(pageB0BlockLimitsBytes, data)
 	converter := dataToInt{data,32,4}
-	if converter.getInt()&0x80000000 != 0 {
+	if uint32(converter.getInt())&0x80000000 != 0 {
 		fmt.Printf("  Unmap grandularity alignment: %d\n", converter.getInt()&0x7fffffff)
 	}
 }

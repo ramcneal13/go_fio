@@ -88,21 +88,15 @@ func main() {
 
 	if inputDevice == "" {
 		inputDevice = flag.Arg(0)
+		if inputDevice == "" {
+			flag.Usage()
+			os.Exit(1)
+		}
 	}
 
-	fp, err = os.Open(inputDevice)
-	if err != nil {
-		/*
-		 * See if the user just gave us the last component part of the device name.
-		 */
-		 if fp, err = os.Open("/dev/rdsk/"+inputDevice); err == nil {
-		 	inputDevice = "/dev/rdsk/"+inputDevice
-		 } else if fp, err = os.Open("/dev/rdsk/" + inputDevice + "p0"); err == nil {
-			 inputDevice = "/dev/rdsk/" + inputDevice + "p0"
-		 } else {
-			 fmt.Printf("%s\n", err)
-			 os.Exit(1)
-		 }
+	if fp, err = osSpecificOpen(inputDevice); err != nil {
+		fmt.Printf("Failed to open '%s', err = %s\n", inputDevice, err)
+		os.Exit(1)
 	}
 
 	defer fp.Close()

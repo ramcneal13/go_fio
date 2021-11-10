@@ -61,6 +61,8 @@ type JobData struct {
 	Verbose            bool
 	Record_Time        string
 	Record_File        string
+	Record_Network     string
+	Graphite_Metric    string
 	Delay_Start        string
 	Barrier            bool
 	Job_Order          string
@@ -71,7 +73,7 @@ type JobData struct {
 	Intermediate_Stats string
 	Save_On_Create     bool
 	Force_Fill         bool
-	Reset_Buf		int
+	Reset_Buf          int
 
 	// To make things easier for the user certain values
 	// in the config file need to be processed beyond
@@ -167,6 +169,8 @@ func (j *JobData) GetJobConfig() map[string]string {
 	d["verbose"] = strconv.FormatBool(j.Verbose)
 	d["record-time"] = string(j.recordTime)
 	d["record-file"] = j.Record_File
+	d["record-network"] = j.Record_Network
+	d["graphite-metric"] = j.Graphite_Metric
 	d["delay-start"] = string(j.delayStart)
 	d["barrier"] = strconv.FormatBool(j.Barrier)
 	d["job-order"] = fmt.Sprintf("%s", j.jobOrder)
@@ -355,6 +359,10 @@ func (j *JobData) validate(section string) error {
 		j.Record_File = "/dev/null"
 	}
 
+	if j.Graphite_Metric == "" {
+		j.Graphite_Metric = "fiod"
+	}
+
 	if j.Delay_Start == "" {
 		j.Delay_Start = "0s"
 	}
@@ -453,6 +461,12 @@ func (c *Configs) UpdateJobs() error {
 		}
 		if jd.Record_File == "" {
 			jd.Record_File = c.Global.Record_File
+		}
+		if jd.Graphite_Metric == "" {
+			jd.Graphite_Metric = c.Global.Graphite_Metric
+		}
+		if jd.Record_Network == "" {
+			jd.Record_Network = c.Global.Record_Network
 		}
 		if jd.Delay_Start == "" {
 			jd.Delay_Start = c.Global.Delay_Start

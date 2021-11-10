@@ -206,6 +206,13 @@ func EnvStrReplace(s string) (string, error) {
 	return s, nil
 }
 
+//noinspection GoUnusedExportedFunction
+func DisplayInterfaceNoPrinter(v interface{}) {
+	p := PrintInit()
+	DisplayInterface(v, p)
+	p.Exit()
+}
+
 func DisplayInterface(v interface{}, printer *Printer) {
 	k := reflect.ValueOf(v).Kind()
 	switch {
@@ -244,12 +251,18 @@ func DisplayStruct(v interface{}, printer *Printer) {
 				maxName = len(typeOfT.Field(i).Name)
 			}
 			switch f.Kind() {
-			case reflect.Int:
+			case reflect.Int, reflect.Int32:
 				curValue = len(fmt.Sprintf("%d", f.Int()))
+			case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				curValue = len(fmt.Sprintf("%d", f.Uint()))
 			case reflect.Bool:
 				curValue = len(fmt.Sprintf("%t", f.Bool()))
 			case reflect.String:
 				curValue = len(f.String())
+			case reflect.UnsafePointer:
+				curValue = len(fmt.Sprintf("0x%x", f.UnsafeAddr()))
+			default:
+				printer.Send("%s: Unknown type: %s\n", typeOfT.Field(i).Name, f.Kind())
 			}
 			if curValue > maxValue {
 				maxValue = curValue
@@ -257,7 +270,7 @@ func DisplayStruct(v interface{}, printer *Printer) {
 		}
 	}
 
-	columns := (width - 8) / (maxName + maxValue + 1)
+	columns := (width - 9) / (maxName + maxValue + 2)
 	if columns == 0 {
 		maxValue = width - maxName - 14
 		columns = 1
@@ -269,14 +282,14 @@ func DisplayStruct(v interface{}, printer *Printer) {
 		if f.CanSet() {
 			if f.Kind() == reflect.String && columns == 1 {
 				if len(f.String()) > (width - maxName - 2) {
-					printer.Send("%*s:%*s ...", maxName, convertFieldName(typeOfT.Field(i).Name),
+					printer.Send("%*s:%*s ... ", maxName, convertFieldName(typeOfT.Field(i).Name),
 						maxValue, f.String()[0:maxValue])
 				} else {
-					printer.Send("%*s:%*s", maxName, convertFieldName(typeOfT.Field(i).Name),
+					printer.Send("%*s:%*s ", maxName, convertFieldName(typeOfT.Field(i).Name),
 						maxValue, f.String())
 				}
 			} else {
-				printer.Send("%*s:%*v", maxName, convertFieldName(typeOfT.Field(i).Name),
+				printer.Send("%*s:%*v ", maxName, convertFieldName(typeOfT.Field(i).Name),
 					maxValue, f.Interface())
 			}
 			if ((i % columns) == (columns - 1)) && (i != (s.NumField() - 1)) {
